@@ -1,0 +1,96 @@
+{
+  "units": "$ millions",
+  "premium_allocation": {
+    "low": 0.85,
+    "base": 0.9,
+    "high": 0.95,
+    "note": "Liability-only NPE is not separately disclosed in the 2025 10-K."
+  },
+  "rows": [
+    {
+      "accident_year": 2021,
+      "commercial_lines_npe": 6945.2,
+      "liability_premium_proxy_base": 6250.68,
+      "unreported_pct_from_10k": 0.005299860529986053,
+      "elr_range": [
+        0.64,
+        0.68,
+        0.72
+      ],
+      "book_ultimate": 3585,
+      "bf_ultimate_range": [
+        3586.0238736959554,
+        3588.5268579079498,
+        3591.1770764853554
+      ]
+    },
+    {
+      "accident_year": 2022,
+      "commercial_lines_npe": 9088.3,
+      "liability_premium_proxy_base": 8179.469999999999,
+      "unreported_pct_from_10k": 0.0234375,
+      "elr_range": [
+        0.67,
+        0.72,
+        0.77
+      ],
+      "book_ultimate": 4992,
+      "bf_ultimate_range": [
+        4996.307504296875,
+        5013.02855625,
+        5030.814643359375
+      ]
+    },
+    {
+      "accident_year": 2023,
+      "commercial_lines_npe": 9899.0,
+      "liability_premium_proxy_base": 8909.1,
+      "unreported_pct_from_10k": 0.03854915016646224,
+      "elr_range": [
+        0.72,
+        0.76,
+        0.82
+      ],
+      "book_ultimate": 5707,
+      "bf_ultimate_range": [
+        5720.537998948659,
+        5748.013057648502,
+        5784.264871210794
+      ]
+    },
+    {
+      "accident_year": 2024,
+      "commercial_lines_npe": 10707.0,
+      "liability_premium_proxy_base": 9636.300000000001,
+      "unreported_pct_from_10k": 0.07760053173811898,
+      "elr_range": [
+        0.66,
+        0.7,
+        0.74
+      ],
+      "book_ultimate": 6018,
+      "bf_ultimate_range": [
+        6017.117449152543,
+        6074.447402791625,
+        6135.100832003988
+      ]
+    },
+    {
+      "accident_year": 2025,
+      "commercial_lines_npe": 10881.0,
+      "liability_premium_proxy_base": 9792.9,
+      "unreported_pct_from_10k": 0.1756697408871322,
+      "elr_range": [
+        0.64,
+        0.68,
+        0.72
+      ],
+      "book_ultimate": 6831,
+      "bf_ultimate_range": [
+        6670.835573122529,
+        6800.815019762846,
+        6938.440316205533
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "source": "studynotes_friedland_estimating.pdf",
+  "pages_extracted": 451,
+  "chain_ladder": {
+    "reported_row_max_abs_diff": 0,
+    "paid_row_max_abs_diff": 0,
+    "reported_sum_of_rows": 569172456,
+    "printed_total": 569172456,
+    "paid_sum_of_rows": 572041098,
+    "printed_paid_total": 572041099
+  },
+  "bornhuetter_ferguson": {
+    "reported_row_max_abs_diff": 0,
+    "paid_row_max_abs_diff": 0,
+    "reported_sum_of_rows": 569091349,
+    "printed_total": 569091348,
+    "paid_sum_of_rows": 570568199,
+    "printed_paid_total": 570568198,
+    "examples": {
+      "2002": {
+        "reported": 58947116,
+        "paid": 58972346
+      },
+      "2007": {
+        "reported": 62835336,
+        "paid": 63209774
+      }
+    }
+  }
+}
