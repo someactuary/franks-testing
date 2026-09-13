@@ -283,3 +283,10 @@ personal_music_notation/
 
 UI framework: React (chosen over Solid for agent fluency and ecosystem; the
 score canvas is custom SVG either way).
+
+## 11. Progress log
+
+- 2026-09-13: Scaffold + Tier 0 contracts committed. M0 fanned out to four
+  agents in worktrees: Opus engraver (`src/engraving`), Sonnet renderer + app
+  shell (`src/render`, `src/ui`), Sonnet file format + command history
+  (`src/io`, `src/commands`), Haiku fixtures + docs (`test/fixtures`, README).
