@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { BRAVURA } from "@/render/smufl";
 import { ensureFontLoaded } from "@/render/fonts";
+import { engrave } from "@/engraving";
+import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
-// TEMPORARY: the real engraver (src/engraving) is being built in parallel.
-// Until `engrave(score, opts)` lands, the app shell displays the same
-// hand-written fixture LayoutResult the renderer's tests are built against.
-import { FIXTURE_LAYOUT } from "../../test/render/fixture-layout";
 import "./app.css";
 import "./print.css";
 
+const FIXTURE_NAMES = Object.keys(FIXTURES);
+
 export function App() {
   const [fontReady, setFontReady] = useState(false);
+  const [fixtureName, setFixtureName] = useState(FIXTURE_NAMES[0] ?? "");
 
   useEffect(() => {
     let cancelled = false;
@@ -19,8 +20,6 @@ export function App() {
         if (!cancelled) setFontReady(true);
       })
       .catch(() => {
-        // Best effort: the glyphs will still show once the browser finishes
-        // loading the font face, just not guaranteed before first paint.
         if (!cancelled) setFontReady(true);
       });
     return () => {
@@ -28,27 +27,44 @@ export function App() {
     };
   }, []);
 
+  // M0: the "document" is one of the sample fixtures. M1 replaces this with an editable score + History.
+  const layout = useMemo(() => {
+    const make = FIXTURES[fixtureName];
+    const score = make ? make() : FIXTURES[FIXTURE_NAMES[0]!]!();
+    return engrave(score, { font: BRAVURA });
+  }, [fixtureName]);
+
   // @page size must match the score's page size in mm; it depends on layout
   // data, so it's injected as a <style> instead of living in print.css.
   const pageSizeCss = useMemo(() => {
-    const page = FIXTURE_LAYOUT.pages[0];
+    const page = layout.pages[0];
     if (!page) return "";
-    const widthMm = page.widthSp * FIXTURE_LAYOUT.staffSpaceMm;
-    const heightMm = page.heightSp * FIXTURE_LAYOUT.staffSpaceMm;
+    const widthMm = page.widthSp * layout.staffSpaceMm;
+    const heightMm = page.heightSp * layout.staffSpaceMm;
     return `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }`;
-  }, []);
+  }, [layout]);
 
   return (
     <div className="app" data-font-ready={fontReady}>
       <style>{pageSizeCss}</style>
       <header className="toolbar">
         <span className="toolbar-title">Personal Music Notation</span>
+        <label>
+          Sample:{" "}
+          <select value={fixtureName} onChange={(e) => setFixtureName(e.target.value)}>
+            {FIXTURE_NAMES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
         <button type="button" onClick={() => window.print()}>
           Print
         </button>
       </header>
       <main>
-        <ScoreView layout={FIXTURE_LAYOUT} font={BRAVURA} />
+        <ScoreView layout={layout} font={BRAVURA} />
       </main>
     </div>
   );

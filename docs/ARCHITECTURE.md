@@ -42,7 +42,7 @@ Score (src/model)  --engrave-->  LayoutResult (src/engraving)  --render-->  SVG 
 - Staff line positions: top line at `staff.y`, lines every 1 sp downward.
   Middle line = `staff.y + 2`. A note on staff step `s` (0 = middle line, +1 = one
   step up = half a space) is drawn at `y = staff.y + 2 - s * 0.5`.
-- Treble clef: middle line is B4 → diatonic(B4) = 34. Bass clef: middle line D3 → 23.
+- Treble clef: middle line is B4 → diatonic(B4) = 34. Bass clef: middle line D3 → 22.
   Alto: C4 → 28. Tenor: A3 → 26.
 - Noteheads are placed by SMuFL origin (left edge, vertical center on the staff position).
   Stem attaches at anchor `stemUpSE` / `stemDownNW` (flip y).
