@@ -335,3 +335,11 @@ score canvas is custom SVG either way).
   - Duration indicator next to the cursor during entry not shown.
   - Mid-measure clef changes, repeat barlines, voices, tuplets, grace notes still absent.
   - Bass-staff entry works via Tab but nothing enforces piano range; no MIDI yet (M3).
+- 2026-09-13 (M1 follow-up from Frank's feedback): Noteflight duration keys (1 whole,
+  2 half, 4 quarter, 8 eighth, 6 sixteenth, 3 thirty-second); selection shown as an
+  outline around noteheads/rests instead of a blue fill; cursor thin, faint, left of
+  the note, and only in note-entry mode; shift/⌘-click and rubber-band multi-select;
+  shift+arrows extend selection; ⌘A; ⌘C/⌘X/⌘V with an internal clipboard that pastes
+  across barlines by splitting into tied notes; Enter / shift+Enter insert a measure
+  after / before; ⌘Backspace removes the measure; Delete erases a multi-selection.
+  In-app Shortcuts panel. 306 tests. Verified headlessly by the architect.
