@@ -3,7 +3,7 @@
 Personal-use music notation software focused on piano scores: create, edit,
 engrave, print, and (optionally) play back.
 
-Status: M0 in progress (started 2026-09-13). All section-10 decisions confirmed by Frank.
+Status: M0 DONE 2026-09-13. M1 next. All section-10 decisions confirmed by Frank.
 
 ---
 
@@ -290,3 +290,20 @@ score canvas is custom SVG either way).
   agents in worktrees: Opus engraver (`src/engraving`), Sonnet renderer + app
   shell (`src/render`, `src/ui`), Sonnet file format + command history
   (`src/io`, `src/commands`), Haiku fixtures + docs (`test/fixtures`, README).
+- 2026-09-13 (later): M0 complete. All four branches merged; 174 tests, lint and
+  build green. App (`npm run dev`) engraves the six sample fixtures with a picker and
+  prints. Golden SVG snapshots in test/golden. Visual check of all fixtures done by
+  the architect: stems, beams (4/4, 3/4, 6/8, partial beams), accidentals with measure
+  memory, chords with seconds, rests, ledger lines, brace, final barline, title, page
+  layout all correct.
+
+  Carry-overs into M1 (from engraver report + review):
+  - Key signature must repeat at every system start (currently only where declared).
+  - Mid-measure clef changes ignored; repeat barlines drawn as double.
+  - Multi-voice: no voice-aware stems/rests, shared accidental memory.
+  - Flag width not reserved in column spacing.
+  - `GlyphPrim` may want non-uniform scaleX/scaleY for the brace.
+  - `History` lacks label accessors for an undo/redo menu.
+  - Agent process: Sonnet renderer agent stalled once with nothing written; a
+    nudge to "stop exploring, write files in this order" fixed it. Include that
+    ordering in Tier 2 prompts from the start.

@@ -9,7 +9,7 @@ describe("fixtures", () => {
       const score = makeScore();
 
       it("every voice length equals the measure length (except measureRests)", () => {
-        for (const [partIndex, part] of score.parts.entries()) {
+        for (const part of score.parts) {
           for (const [measureIndex, pm] of part.measures.entries()) {
             // Get the time signature in effect for this measure
             let measureTs: TimeSignature | undefined;
