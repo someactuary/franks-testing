@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import { EditorStore } from "@/ui/store";
 import { stubKeyHandler } from "./stub-key-handler";
 import { stubActionHandler } from "./stub-action-handler";
+import { stubMidiHandler } from "@/ui/stub-midi-handler";
 import { setTitle } from "@/commands/basic";
 import { frac, newId, newPianoScore, note } from "@/model";
 import type { Score } from "@/model";
-import type { KeyHandler, KeyStroke } from "@/input/types";
+import type { KeyHandler, KeyStroke, MidiNoteOn } from "@/input/types";
+
+function midiNoteOn(note: number, opts: Partial<Omit<MidiNoteOn, "note">> = {}): MidiNoteOn {
+  return { note, velocity: 100, held: [], ...opts };
+}
 
 function key(k: string, opts: Partial<Omit<KeyStroke, "key">> = {}): KeyStroke {
   return { key: k, shift: false, mod: false, alt: false, ...opts };
@@ -174,6 +179,53 @@ describe("EditorStore.applyAction with the stub action handler", () => {
     const store = new EditorStore(makeTestScore(), stubKeyHandler);
     expect(store.applyAction({ kind: "setVoice", voiceIndex: 1 })).toBe(false);
     expect(store.getSnapshot().cursor.voiceIndex).toBe(0);
+  });
+});
+
+describe("EditorStore.applyMidi with the MIDI stub (src/ui/stub-midi-handler.ts)", () => {
+  it("returns false and leaves the snapshot untouched when note entry is off", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler, stubMidiHandler);
+    const before = store.getSnapshot();
+    expect(store.applyMidi(midiNoteOn(76))).toBe(false);
+    expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("writes a C4 quarter note at the cursor and advances it, ignoring the incoming pitch", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler, stubMidiHandler);
+    store.applyKey(key("n")); // stubKeyHandler: toggles entry.active
+    expect(store.getSnapshot().entry.active).toBe(true);
+
+    // Note number 76 (E5) is deliberately ignored by the stub: it always writes C4.
+    expect(store.applyMidi(midiNoteOn(76))).toBe(true);
+
+    const snap = store.getSnapshot();
+    expect(snap.canUndo).toBe(true);
+    expect(snap.cursor).toMatchObject({ measureIndex: 0, offset: frac(1, 4) });
+
+    const voice = snap.score.parts[0]!.measures[0]!.staves[0]!.voices.find((v) => v.index === 0)!;
+    const first = voice.items[0]!;
+    expect(first.kind).toBe("note");
+    expect(first.kind === "note" && first.notes[0]!.pitch).toEqual({ step: "C", alter: 0, octave: 4 });
+    expect(snap.selection.ids).toEqual([first.kind === "note" ? first.notes[0]!.id : ""]);
+  });
+
+  it("refuses (with a message, not a throw) once the measure is full", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler, stubMidiHandler);
+    store.applyKey(key("n"));
+    for (let i = 0; i < 4; i++) expect(store.applyMidi(midiNoteOn(60))).toBe(true);
+
+    // The measure (4 quarters) is now full; a 5th note-on is refused, not thrown.
+    let result: boolean | undefined;
+    expect(() => {
+      result = store.applyMidi(midiNoteOn(60));
+    }).not.toThrow();
+    expect(result).toBe(true); // "handled" via a message, per KeyResult contract
+    expect(store.getSnapshot().message).toMatch(/does not fit/i);
+  });
+
+  it("without a midiHandler, applyMidi always returns false (nothing wired at all)", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler);
+    expect(store.applyMidi(midiNoteOn(60))).toBe(false);
   });
 });
 

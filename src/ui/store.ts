@@ -19,12 +19,17 @@ import type {
   KeyHandler,
   KeyResult,
   KeyStroke,
+  MidiHandler,
+  MidiNoteOn,
   PaletteAction,
   Selection,
 } from "@/input/types";
 
 /** Default `actionHandler`: nothing is wired up, so every action is "not handled" (like an unbound key). */
 const NOOP_ACTION_HANDLER: ActionHandler = () => null;
+
+/** Default `midiHandler`: no MIDI wiring, every note-on is "not handled". */
+const NOOP_MIDI_HANDLER: MidiHandler = () => null;
 
 const AUTOSAVE_KEY = "pmn.autosave";
 const MAX_VOICES = 4;
@@ -102,6 +107,7 @@ export class EditorStore {
   private history: History;
   private readonly keyHandler: KeyHandler;
   private readonly actionHandler: ActionHandler;
+  private readonly midiHandler: MidiHandler;
   private cursor: Cursor;
   private selection: Selection;
   private entry: EntryState;
@@ -111,9 +117,15 @@ export class EditorStore {
   private snapshot: EditorSnapshot;
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(initialScore: Score, keyHandler: KeyHandler, actionHandler: ActionHandler = NOOP_ACTION_HANDLER) {
+  constructor(
+    initialScore: Score,
+    keyHandler: KeyHandler,
+    actionHandler: ActionHandler = NOOP_ACTION_HANDLER,
+    midiHandler: MidiHandler = NOOP_MIDI_HANDLER,
+  ) {
     this.keyHandler = keyHandler;
     this.actionHandler = actionHandler;
+    this.midiHandler = midiHandler;
     const restored = loadAutosave();
     this.history = new History(restored ?? initialScore);
     this.cursor = clampCursor(this.history.current, defaultCursor());
@@ -217,6 +229,18 @@ export class EditorStore {
     return true;
   };
 
+  /**
+   * Runs `ev` (a note-on from src/ui/midi.ts) through the MidiHandler against the
+   * current state and applies the result exactly like `applyKey`/`applyAction`.
+   * Returns whether the note-on was handled (entry inactive, for instance, is not).
+   */
+  applyMidi = (ev: MidiNoteOn): boolean => {
+    const result = this.midiHandler(this.currentState(), ev);
+    if (result === null) return false;
+    this.applyResult(result);
+    return true;
+  };
+
   setCursor = (cursor: Cursor): void => {
     this.cursor = clampCursor(this.history.current, cursor);
     this.emit();
@@ -262,6 +286,7 @@ export class EditorStore {
 export interface EditorStoreApi extends EditorSnapshot {
   applyKey: (stroke: KeyStroke) => boolean;
   applyAction: (action: PaletteAction) => boolean;
+  applyMidi: (ev: MidiNoteOn) => boolean;
   setCursor: (cursor: Cursor) => void;
   setSelection: (selection: Selection) => void;
   undo: () => void;
@@ -275,8 +300,9 @@ export function useEditorStore(
   initialScore: Score,
   keyHandler: KeyHandler,
   actionHandler: ActionHandler = NOOP_ACTION_HANDLER,
+  midiHandler: MidiHandler = NOOP_MIDI_HANDLER,
 ): EditorStoreApi {
-  const [store] = useState(() => new EditorStore(initialScore, keyHandler, actionHandler));
+  const [store] = useState(() => new EditorStore(initialScore, keyHandler, actionHandler, midiHandler));
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
 
   return useMemo(
@@ -284,6 +310,7 @@ export function useEditorStore(
       ...snapshot,
       applyKey: store.applyKey,
       applyAction: store.applyAction,
+      applyMidi: store.applyMidi,
       setCursor: store.setCursor,
       setSelection: store.setSelection,
       undo: store.undo,
