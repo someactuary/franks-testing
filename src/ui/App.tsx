@@ -16,8 +16,7 @@ import { Palettes } from "./Palettes";
 import { newSatbScore } from "./presets";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
-// TEMPORARY: replaced by @/input/actions at merge (see stub-action-handler.ts).
-import { stubActionHandler } from "./stub-action-handler";
+import { handleAction } from "@/input/actions";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
@@ -149,7 +148,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
-  const editor = useEditorStore(initialScore, handleKey, stubActionHandler);
+  const editor = useEditorStore(initialScore, handleKey, handleAction);
 
   useEffect(() => {
     let cancelled = false;

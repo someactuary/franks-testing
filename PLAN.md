@@ -349,3 +349,25 @@ score canvas is custom SVG either way).
   tuplets + staff groups/names; Opus E2 attachments + spanners + skyline; Sonnet C1 staff
   commands, duration-on-selection, tuplet entry, notation commands, voices, handleAction,
   keys; Sonnet U1 staves panel, SATB preset, palettes, notehead drag, voice toggle.
+- 2026-09-14 (M2 done): 473 tests, lint and build green. Engraving: voices (stems by
+  voice, rest offsets, unison offset, invisible rests), tuplets (brackets, numbers,
+  nested, beaming by outer tuplet), staff groups (brace/bracket/none) and staff names,
+  articulations, fermata, dynamics lane, hairpins, slurs with skyline clearance and
+  system-break splitting, pedal text/line, ottava, trill line, glissando, tempo with
+  metronome glyph, expression text, fingering. Editing: staff add/remove/clef/name/
+  bracket, "." and duration digits on selected notes, tuplet entry (⌘3 etc.) and writing
+  inside tuplets, voice switching (V, ⌘⌥1-4) with create-on-demand, hidden rests (H),
+  slur (S) / hairpins (< >) keys, palettes for dynamics, articulations, lines, marks,
+  fingering, tuplets, durations; Staves panel; New SATB preset; drag a notehead to change
+  pitch. Verified by the architect in headless Chromium: dot/duration on selection,
+  voice-2 entry (after fixing a cursor clamp that reset the voice), triplet creation and
+  fill, palettes, drag D4→F4, SATB + fifth staff with alto clef.
+
+  Carry-overs into M3 (besides MusicXML + MIDI input):
+  - ⌘A selects voice 0 only; no keyboard multi-voice selection.
+  - Ornaments, arpeggio, tremolo not drawn; 15ma falls back to 8va glyph.
+  - Tuplet brackets horizontal; cross-voice rest/note collisions unhandled.
+  - Text widths estimated (no font metrics) for labels/tempo/expression.
+  - Courtesy key signature at the end of a system before a key change still missing.
+  - No "Pasted" status message; first Right-arrow from measure start skips the first note.
+  - No lyrics yet (needed for choral work); no part names beyond staff names.

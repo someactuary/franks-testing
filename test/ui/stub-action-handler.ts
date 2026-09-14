@@ -1,4 +1,4 @@
-// TEMPORARY: replaced by @/input/actions at merge.
+// Test-only stub (the app uses @/input/actions).
 /**
  * Minimal `ActionHandler` stub so the UI (palettes, staves panel, notehead
  * dragging) can be built and screenshotted before the real `handleAction`

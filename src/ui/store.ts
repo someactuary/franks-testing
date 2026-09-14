@@ -27,6 +27,7 @@ import type {
 const NOOP_ACTION_HANDLER: ActionHandler = () => null;
 
 const AUTOSAVE_KEY = "pmn.autosave";
+const MAX_VOICES = 4;
 const AUTOSAVE_DEBOUNCE_MS = 400;
 
 export type NewScoreOptions = NonNullable<Parameters<typeof newPianoScore>[0]>;
@@ -49,8 +50,9 @@ function clampCursor(score: Score, cursor: Cursor): Cursor {
   const measureIndex = clampIndex(cursor.measureIndex, part?.measures.length ?? 0);
   const pm = part?.measures[measureIndex];
   const staffIndex = clampIndex(cursor.staffIndex, pm?.staves.length ?? 0);
-  const sm = pm?.staves[staffIndex];
-  const voiceIndex = clampIndex(cursor.voiceIndex, sm?.voices.length ?? 0);
+  // Voices are created on demand when the cursor writes into them, so only clamp to the
+  // model's maximum (4 voices), not to the voices that currently exist in this measure.
+  const voiceIndex = clampIndex(cursor.voiceIndex, MAX_VOICES);
 
   if (
     partIndex === cursor.partIndex &&
