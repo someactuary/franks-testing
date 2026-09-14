@@ -93,10 +93,14 @@ export interface MeasureAttributes {
 // Parts, staves, voices
 // ---------------------------------------------------------------------------
 
+export type StaffGroupSymbol = "brace" | "bracket" | "none";
+
 export interface Part {
   id: Id;
   name: string;
   abbreviation?: string;
+  /** Symbol joining the part's staves at each system start. Default: "brace" when 2+ staves. */
+  bracket?: StaffGroupSymbol;
   staves: StaffDef[];
   /** Index-aligned with Score.measures. */
   measures: PartMeasure[];
@@ -110,6 +114,10 @@ export interface StaffDef {
   id: Id;
   lines: 5;
   initialClef: ClefKind;
+  /** Optional label drawn left of the staff on the first system (e.g. "Soprano"). */
+  name?: string;
+  /** Short label for later systems (e.g. "S."). */
+  abbreviation?: string;
 }
 
 export interface PartMeasure {

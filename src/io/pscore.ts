@@ -159,6 +159,8 @@ const StaffDefSchema = z
     id: IdSchema,
     lines: z.literal(5),
     initialClef: ClefKindSchema,
+    name: z.string().exactOptional(),
+    abbreviation: z.string().exactOptional(),
   })
   .strict();
 
@@ -285,6 +287,7 @@ const PartSchema = z
     id: IdSchema,
     name: z.string(),
     abbreviation: z.string().exactOptional(),
+    bracket: z.enum(["brace", "bracket", "none"]).exactOptional(),
     staves: z.array(StaffDefSchema),
     measures: z.array(PartMeasureSchema),
     midiProgram: z.number().exactOptional(),

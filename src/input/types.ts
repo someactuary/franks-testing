@@ -4,7 +4,17 @@
  */
 import type { Fraction, NoteValue } from "@/model/duration";
 import type { Alter } from "@/model/pitch";
-import type { Id, NoteEvent, RestEvent, Score } from "@/model";
+import type {
+  Articulation,
+  ClefKind,
+  Id,
+  NoteEvent,
+  Placement,
+  RestEvent,
+  Score,
+  StaffGroupSymbol,
+} from "@/model";
+import type { NotatedDuration } from "@/model/duration";
 import type { Command } from "@/commands/types";
 
 /** Where the next entered note goes. `offset` is measure-relative, in whole notes. */
@@ -103,3 +113,38 @@ export const DEFAULT_ENTRY_STATE: EntryState = {
   chordMode: false,
   active: false,
 };
+
+/**
+ * Actions triggered from the UI (palettes, inspector, mouse drags) rather than raw keys.
+ * Handled by the same pure machinery as keystrokes: `ActionHandler` returns a KeyResult the
+ * store applies. Most act on the current selection (or the event before the cursor).
+ */
+export type PaletteAction =
+  // Notation on the selection
+  | { kind: "dynamic"; text: string }
+  | { kind: "articulation"; articulation: Articulation }
+  | { kind: "slur" }
+  | { kind: "hairpin"; shape: "cresc" | "dim" }
+  | { kind: "pedal" }
+  | { kind: "ottava"; shift: 8 | -8 }
+  | { kind: "fermata" }
+  | { kind: "tempo"; text?: string; bpm?: number; beatUnit?: NotatedDuration }
+  | { kind: "text"; text: string; style: "expression" | "technique" | "plain"; placement?: Placement }
+  | { kind: "fingering"; text: string }
+  | { kind: "tuplet"; actual: number; normal: number }
+  | { kind: "setDuration"; base: NotatedDuration["base"]; dots: NotatedDuration["dots"] }
+  | { kind: "toggleDot" }
+  | { kind: "removeAttachment"; id: Id }
+  | { kind: "removeSpanner"; id: Id }
+  // Mouse editing
+  | { kind: "dragPitch"; noteId: Id; diatonicDelta: number }
+  // Staves (SATB etc.)
+  | { kind: "addStaff"; atIndex: number; clef: ClefKind; name?: string }
+  | { kind: "removeStaff"; staffIndex: number }
+  | { kind: "setClef"; staffIndex: number; clef: ClefKind }
+  | { kind: "setStaffName"; staffIndex: number; name: string; abbreviation?: string }
+  | { kind: "setBracket"; bracket: StaffGroupSymbol }
+  // Voices
+  | { kind: "setVoice"; voiceIndex: number };
+
+export type ActionHandler = (state: EditorState, action: PaletteAction) => KeyResult | null;
