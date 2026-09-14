@@ -344,6 +344,49 @@ describe("handleKey: cursor navigation", () => {
     expect(h.entry.active).toBe(false);
     expect(h.selection.ids).toEqual([]);
   });
+
+  it("ArrowRight from offset 0 with nothing selected selects the measure's FIRST event, not the second", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    expect(h.selection.ids).toEqual([]); // nothing selected, cursor at offset 0
+
+    h.press({ key: "ArrowRight" });
+
+    expect(h.selection.ids).toEqual([c.notes[0]!.id]);
+    // the cursor still advances past the now-selected first event, same as before
+    expect(h.cursor.offset).toEqual(frac(1, 4));
+  });
+
+  it("ArrowRight with something already selected keeps selecting the next event as before", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id] }; // already selected, unlike the previous test
+
+    h.press({ key: "ArrowRight" });
+
+    expect(h.selection.ids).toEqual([d.notes[0]!.id]);
+  });
+
+  it("ArrowRight from offset 0 in a measure with a single whole-note event selects it and stays put", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const whole = note("C4", 1);
+    voice.items = [whole];
+    const h = new Harness(score);
+
+    h.press({ key: "ArrowRight" });
+
+    expect(h.selection.ids).toEqual([whole.notes[0]!.id]);
+    expect(h.cursor.offset).toEqual(frac(0));
+  });
 });
 
 describe("handleKey: undo/redo", () => {
@@ -396,6 +439,20 @@ describe("handleKey: clipboard", () => {
     expect(h.clipboard!.staves[0]!.items).toHaveLength(1);
   });
 
+  it("mod+c on a selection that includes a rest reports 'N events', not 'N notes'", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const r = rest(4);
+    voice.items = [c, r, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id, r.id] };
+
+    const result = h.press({ key: "c", mod: true });
+
+    expect(result?.message).toBe("Copied 2 events");
+  });
+
   it("mod+v pastes two copied quarters at another measure with the same pitches", () => {
     const h = new Harness(newPianoScore({ measureCount: 3 }));
     h.press({ key: "n" });
@@ -404,11 +461,12 @@ describe("handleKey: clipboard", () => {
     h.press({ key: "d" });
     // select both just-entered notes
     h.selection = { ids: [h.voiceItems(0)[0]!.id, h.voiceItems(0)[1]!.id] };
-    h.press({ key: "c", mod: true });
+    const copyResult = h.press({ key: "c", mod: true });
+    expect(copyResult?.message).toBe("Copied 2 notes");
 
     h.cursor = { partIndex: 0, measureIndex: 2, staffIndex: 0, voiceIndex: 0, offset: frac(0) };
     h.selection = { ids: [] };
-    h.press({ key: "v", mod: true });
+    const pasteResult = h.press({ key: "v", mod: true });
 
     const items = h.voiceItems(2);
     const spelled = items.slice(0, 2).map((it) => {
@@ -418,6 +476,7 @@ describe("handleKey: clipboard", () => {
     expect(spelled).toEqual(["C", "D"]);
     expect(h.selection.ids).toEqual([]);
     expect(h.cursor).toMatchObject({ measureIndex: 2, offset: frac(1, 2) });
+    expect(pasteResult?.message).toBe("Pasted 2 notes");
   });
 
   it("mod+v with nothing copied reports 'Nothing to paste'", () => {
@@ -585,6 +644,23 @@ describe("handleKey: selection erase and extend", () => {
     expect(h.selection.ids).toHaveLength(4);
     expect(h.selection.ids).toContain(c.notes[0]!.id);
     expect(h.selection.ids).toContain(g.notes[0]!.id);
+  });
+
+  it("mod+a also selects events in every voice, not just voice 0", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const sm = score.parts[0]!.measures[0]!.staves[0]!;
+    const v0Note = note("C4", 1);
+    sm.voices[0]!.items = [v0Note];
+    const v1Note = note("C3", 1);
+    sm.voices.push({ id: "v1", index: 1, items: [v1Note] });
+    const h = new Harness(score);
+
+    h.press({ key: "a", mod: true });
+
+    expect(h.selection.ids).toEqual(expect.arrayContaining([v0Note.notes[0]!.id, v1Note.notes[0]!.id]));
+    // both staves' voice-1 rest tails don't exist here (only staff 0 was touched, staff
+    // 1 keeps its default measureRest in voice 0), so exactly these two plus that rest.
+    expect(h.selection.ids).toHaveLength(3);
   });
 });
 

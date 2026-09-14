@@ -68,6 +68,22 @@ describe("copySelection", () => {
 });
 
 describe("copy + paste", () => {
+  it("reports 'Pasted N notes' on a successful paste", () => {
+    const score = newPianoScore({ measureCount: 3 });
+    const voice = voiceOf(score, 0);
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+
+    const copyState = stateOf(score, { selection: { ids: [c.notes[0]!.id, d.notes[0]!.id] } });
+    const clipboard = copySelection(copyState);
+
+    const pasteState = stateOf(score, { cursor: cursorAt(2), clipboard });
+    const result = pasteAt(pasteState);
+
+    expect(result.message).toBe("Pasted 2 notes");
+  });
+
   it("pastes two copied quarters at another measure with the same pitches", () => {
     const score = newPianoScore({ measureCount: 3 });
     const voice = voiceOf(score, 0);

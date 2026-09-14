@@ -7,6 +7,7 @@
 import {
   add,
   cmp,
+  eq,
   lt,
   newId,
   notated,
@@ -51,6 +52,7 @@ import {
 } from "./navigation";
 import {
   DEFAULT_ENTRY_STATE,
+  type ClipboardContent,
   type Cursor,
   type EditorState,
   type EntryState,
@@ -145,6 +147,13 @@ function selectionOf(pe: PositionedVoiceEvent | undefined): Selection {
   return { ids: idsForEvent(pe.event) };
 }
 
+/** The mod+c status message: "Copied N notes" only when every copied item is a note, else "Copied N events" (rests and notes mixed, or rests only). */
+function copiedMessage(clipboard: ClipboardContent): string {
+  const items = clipboard.staves.flatMap((s) => s.items);
+  const allNotes = items.every((i) => i.event.kind === "note");
+  return `Copied ${items.length} ${allNotes ? "notes" : "events"}`;
+}
+
 /**
  * Erases every event in the current selection (deduplicated by event id), earliest
  * first. Returns the commands plus the cursor position of the earliest erased event
@@ -171,8 +180,19 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
 
 /** Cursor + event-boundary navigation shared by ArrowLeft/ArrowRight. Crosses measures; stops at score ends. */
 function moveToEvent(state: EditorState, dir: 1 | -1): KeyResult {
-  const { score, cursor } = state;
+  const { score, cursor, selection } = state;
   if (dir === 1) {
+    // With nothing selected and the cursor sitting at the very start of a measure,
+    // ArrowRight selects that measure's FIRST event (the one the cursor is already
+    // touching) instead of skipping straight past it to the second.
+    if (selection.ids.length === 0 && eq(cursor.offset, ZERO)) {
+      const first = eventAtCursor(score, cursor);
+      if (first) {
+        const off = nextOffset(score, cursor);
+        const newCursor: Cursor = off !== null ? { ...cursor, offset: off } : cursor;
+        return { commands: [], cursor: newCursor, selection: selectionOf(first) };
+      }
+    }
     const off = nextOffset(score, cursor);
     if (off !== null) {
       const newCursor: Cursor = { ...cursor, offset: off };
@@ -541,7 +561,7 @@ export const handleKey: KeyHandler = (state, key) => {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
     const clipboard = copySelection(state);
     if (!clipboard) return { commands: [], message: "Cannot copy tuplets yet" };
-    return { commands: [], clipboard, message: `Copied ${state.selection.ids.length} notes` };
+    return { commands: [], clipboard, message: copiedMessage(clipboard) };
   }
   if (key.mod && lower === "x") {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
@@ -567,8 +587,12 @@ export const handleKey: KeyHandler = (state, key) => {
     if (part) {
       for (let staffIndex = 0; staffIndex < part.staves.length; staffIndex++) {
         for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
-          const voiceCursor: Cursor = { partIndex: cursor.partIndex, measureIndex, staffIndex, voiceIndex: 0, offset: ZERO };
-          for (const pe of eventsInVoice(score, voiceCursor)) ids.push(...idsForEvent(pe.event));
+          const sm = part.measures[measureIndex]?.staves[staffIndex];
+          if (!sm) continue;
+          for (const voice of sm.voices) {
+            const voiceCursor: Cursor = { partIndex: cursor.partIndex, measureIndex, staffIndex, voiceIndex: voice.index, offset: ZERO };
+            for (const pe of eventsInVoice(score, voiceCursor)) ids.push(...idsForEvent(pe.event));
+          }
         }
       }
     }
