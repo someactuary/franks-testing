@@ -3,7 +3,7 @@
 Personal-use music notation software focused on piano scores: create, edit,
 engrave, print, and (optionally) play back.
 
-Status: M0 DONE 2026-09-13. M1 next. All section-10 decisions confirmed by Frank.
+Status: M1 DONE 2026-09-13. M2 next. All section-10 decisions confirmed by Frank.
 
 ---
 
@@ -312,3 +312,26 @@ score canvas is custom SVG either way).
   Opus engraving (key sig per system, ties, tied-note accidentals), Sonnet commands +
   pure step-entry key handler, Sonnet editor UI (store, cursor, selection, open/save,
   autosave, undo/redo).
+- 2026-09-13 (M1 done): 271 tests, lint and build green. Engraving: key signature at
+  every system, key-change cancellation naturals, ties (in-measure, across barline,
+  across system break) with tie-aware accidental memory. Editing: span-replace
+  writeEvent with rest decomposition, erase, chord add/remove, accidentals, semitone/
+  octave transpose, append measure (final barline follows). Pure keyboard step entry
+  (MuseScore-style: N, 1-7 durations, ".", A-G nearest octave with key-signature
+  alteration, Shift+letter chord, 0 rest, +/- pending accidental, arrows transpose,
+  T tie, Backspace/Delete, Tab staff, Home/End, mod+arrows measures, mod+Z/shift+Z).
+  UI: store with grouped undo per keystroke, cursor overlay from layout columns,
+  click selection and empty-space hit-testing, New/Open/Save .pscore, autosave to
+  localStorage, status bar. Verified by the architect in headless Chromium by typing a
+  five-measure phrase (quarters, beamed eighths, chord, rest, flat, tied whole notes),
+  then undo/redo and autosave.
+
+  Carry-overs into M2:
+  - Courtesy key signature at the end of the previous system (needs breaker awareness).
+  - Tie tuning: long ties slightly deep (1.2 sp cap); continuation stub tight after clef.
+  - No collision avoidance tie vs accidentals/articulations; multi-system ties draw only ends.
+  - Entering a rest into an all-rest measure collapses to a measureRest with a new id, so
+    the returned selection id is stale (harmless).
+  - Duration indicator next to the cursor during entry not shown.
+  - Mid-measure clef changes, repeat barlines, voices, tuplets, grace notes still absent.
+  - Bass-staff entry works via Tab but nothing enforces piano range; no MIDI yet (M3).
