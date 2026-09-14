@@ -8,7 +8,16 @@ import { add, cmp, lt, newId, notated, notatedToFraction, ZERO, type NoteValue, 
 import { keyAlter, STEPS, type Alter, type Pitch, type Step } from "@/model/pitch";
 import { locateNote } from "@/commands/locate";
 import { addMeasures, removeMeasure, toggleTie } from "@/commands/basic";
-import { addNoteToEvent, appendMeasure, canWrite, eraseEvent, setNoteAlter, transposeNotes, writeEvent } from "@/commands/edit";
+import {
+  addNoteToEvent,
+  appendMeasure,
+  canWrite,
+  eraseEvent,
+  setNoteAlter,
+  soundingLengthAt,
+  transposeNotes,
+  writeEvent,
+} from "@/commands/edit";
 import type { Command } from "@/commands/types";
 import { copySelection, pasteAt } from "./clipboard";
 import {
@@ -186,7 +195,10 @@ function enter(state: EditorState, event: { kind: "note"; pitch: Pitch } | { kin
 
   const commands: Command[] = [writeEvent(cursor, noteEvent)];
   let measureIndex = cursor.measureIndex;
-  let offset = add(cursor.offset, len);
+  // Advance by the SOUNDING length: inside a tuplet, `len` (notated) overstates how
+  // far the cursor should move (see docs/ARCHITECTURE.md's tuplet contract).
+  const soundingLen = soundingLengthAt(score, cursor, len);
+  let offset = add(cursor.offset, soundingLen);
 
   const measureLen = measureLength(score, cursor.measureIndex);
   if (!lt(offset, measureLen)) {

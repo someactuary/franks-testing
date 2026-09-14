@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { frac, newPianoScore, note, rest, type Score, type VoiceItem } from "@/model";
 import { History } from "@/commands/history";
+import { makeTuplet } from "@/commands/edit";
 import { defaultEditorState, handleKey } from "@/input/step-entry";
 import type { ClipboardContent, Cursor, EditorState, EntryState, KeyResult, KeyStroke, Selection } from "@/input/types";
 
@@ -583,5 +584,53 @@ describe("handleKey: selection erase and extend", () => {
     expect(h.selection.ids).toHaveLength(4);
     expect(h.selection.ids).toContain(c.notes[0]!.id);
     expect(h.selection.ids).toContain(g.notes[0]!.id);
+  });
+});
+
+describe("handleKey: writing into a tuplet", () => {
+  it('making a triplet at the cursor, then "n 8 c d e" fills its three slots and the cursor advances by the sounding length', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const quarter = note("C4", 4);
+    voice.items = [quarter, rest(4), rest(2)]; // quarter at offset 0, filling the rest of the measure
+
+    const h = new Harness(score);
+    h.history.execute(makeTuplet(quarter.id, 3, 2)); // quarter -> triplet of eighths; cursor stays at offset 0
+
+    h.press({ key: "n" });
+    h.press({ key: "8" }); // eighth
+    h.press({ key: "c" });
+    h.press({ key: "d" });
+    h.press({ key: "e" });
+
+    const group = h.voiceItems(0)[0]!;
+    if (group.kind !== "tuplet") throw new Error("expected a tuplet");
+    expect(group.items).toHaveLength(3);
+    const spelled = group.items.map((it) => {
+      if (it.kind !== "note") throw new Error("expected a note event");
+      return it.notes[0]!.pitch.step;
+    });
+    expect(spelled).toEqual(["C", "D", "E"]);
+    // three triplet eighths sound 1/4 total, same as the original quarter.
+    expect(h.cursor).toEqual({ partIndex: 0, measureIndex: 0, staffIndex: 0, voiceIndex: 0, offset: frac(1, 4) });
+  });
+
+  it("refuses a write that doesn't fit inside the tuplet's own remaining capacity, with a tuplet-specific message", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const quarter = note("C4", 4);
+    voice.items = [quarter, rest(4), rest(2)];
+
+    const h = new Harness(score);
+    h.history.execute(makeTuplet(quarter.id, 3, 2)); // triplet capacity is 3/8
+    h.entry = { ...h.entry, active: true, base: 2 }; // a half note (1/2) doesn't fit in 3/8
+
+    const result = h.press({ key: "c" });
+
+    expect(result?.commands).toEqual([]);
+    expect(result?.message).toMatch(/tuplet/i);
+    // nothing was written: still the untouched triplet.
+    const group = h.voiceItems(0)[0]!;
+    expect(group.kind).toBe("tuplet");
   });
 });
