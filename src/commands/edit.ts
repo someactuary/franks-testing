@@ -5,18 +5,23 @@
  * here by `writeEvent`.
  */
 import type { Draft } from "immer";
-import { newId } from "@/model";
+import { emptyVoice, newId, rest } from "@/model";
 import {
   add,
   eq,
+  frac,
   fracToString,
   lt,
   measureLength as timeSigMeasureLength,
+  mul,
+  notated,
   notatedToFraction,
+  NOTE_VALUES,
   sub,
   ZERO,
   type Fraction,
   type NotatedDuration,
+  type NoteValue,
   type TimeSignature,
 } from "@/model/duration";
 import { itemLength, positionedEvents } from "@/model/traverse";
@@ -26,6 +31,8 @@ import type {
   NoteEvent,
   RestEvent,
   Score,
+  TupletGroup,
+  Voice,
   VoiceItem,
 } from "@/model/score";
 import { addMeasures } from "./basic";
@@ -82,6 +89,18 @@ function isSoleMeasureRest(voice: { items: readonly VoiceItem[] }): boolean {
  * Returns a refusal message if writing an event of length `len` at `cursor` isn't
  * allowed, or `null` if it's fine. Pure; never throws for the conditions it checks
  * (missing cursor targets are still reported as a message, not an exception).
+ *
+ * A cursor whose offset lies inside an existing tuplet resolves to that tuplet's own
+ * grid (see `resolveWriteTarget`): `len` is then checked against the tuplet's own
+ * notated capacity rather than the measure, and a write that would spill outside the
+ * tuplet is refused ("Does not fit in the tuplet") rather than silently escaping it.
+ * A cursor outside any tuplet that would overlap one is still refused as before
+ * ("Cannot write into a tuplet yet").
+ *
+ * A cursor addressing a voice index that doesn't exist yet is not refused on that
+ * account: `writeSpan` creates it (a fresh measure-rest voice) on demand, so it's
+ * checked here as if it already existed in that shape (i.e. anything that fits the
+ * measure is fine).
  */
 export function canWrite(score: Score, cursor: Cursor, len: Fraction): string | null {
   const part = score.parts[cursor.partIndex];
@@ -90,8 +109,6 @@ export function canWrite(score: Score, cursor: Cursor, len: Fraction): string | 
   if (!pm) return `No measure at index ${cursor.measureIndex}`;
   const sm = pm.staves[cursor.staffIndex];
   if (!sm) return `No staff at index ${cursor.staffIndex}`;
-  const voice = sm.voices[cursor.voiceIndex];
-  if (!voice) return `No voice at index ${cursor.voiceIndex}`;
 
   let measureLen: Fraction;
   try {
@@ -100,22 +117,117 @@ export function canWrite(score: Score, cursor: Cursor, len: Fraction): string | 
     return err instanceof Error ? err.message : String(err);
   }
 
-  const spanEnd = add(cursor.offset, len);
-  if (lt(measureLen, spanEnd)) {
-    return `Does not fit in the measure: ${fracToString(cursor.offset)} + ${fracToString(len)} exceeds ${fracToString(measureLen)}`;
+  const voice = sm.voices.find((v) => v.index === cursor.voiceIndex);
+  if (!voice) {
+    // Not created yet: behaves exactly like a fresh (sole-measureRest) voice would.
+    return lt(measureLen, add(cursor.offset, len))
+      ? `Does not fit in the measure: ${fracToString(cursor.offset)} + ${fracToString(len)} exceeds ${fracToString(measureLen)}`
+      : null;
   }
 
-  if (!isSoleMeasureRest(voice)) {
-    for (const pe of positionedEvents(voice)) {
-      if (pe.tuplets.length === 0) continue;
-      const evEnd = add(pe.offset, pe.length);
-      if (lt(pe.offset, spanEnd) && lt(cursor.offset, evEnd)) {
-        return "Cannot write into a tuplet yet";
-      }
+  const target = resolveWriteTarget(voice, cursor.offset, measureLen, true);
+  return spanRefusal(
+    target.owner.items,
+    target.capacity,
+    target.offset,
+    len,
+    target.allowSoleMeasureRest,
+    target.allowSoleMeasureRest ? "Does not fit in the measure" : "Does not fit in the tuplet",
+  );
+}
+
+/** Any node holding a `VoiceItem[]`: a `Voice` or a `TupletGroup`. Shared shape for the tuplet-aware span-replace helpers below. */
+interface ItemsOwner {
+  items: VoiceItem[];
+}
+
+/**
+ * Resolution of a (voice-relative) offset to the innermost container it actually
+ * addresses: the voice itself, or — if the offset lies inside an existing tuplet's
+ * span — that tuplet (recursively, for nested tuplets). `offset`/`capacity` are
+ * re-expressed in the resolved container's own local notated grid (see
+ * docs/ARCHITECTURE.md's "Tuplets" M2 contract: `offset_in_tuplet_notated =
+ * (offset - tupletStart) * actual/normal`). `scale` is the cumulative notated->sounding
+ * factor from the resolved container back up to the voice (1 at top level), used to
+ * convert a write's notated length into the cursor-advancement (sounding) length.
+ */
+interface WriteTarget {
+  owner: ItemsOwner;
+  offset: Fraction;
+  capacity: Fraction;
+  allowSoleMeasureRest: boolean;
+  scale: Fraction;
+}
+
+function resolveWriteTarget(
+  owner: ItemsOwner,
+  offset: Fraction,
+  capacity: Fraction,
+  allowSoleMeasureRest: boolean,
+  scale: Fraction = frac(1),
+): WriteTarget {
+  const items = owner.items;
+  const positions =
+    allowSoleMeasureRest && isSoleMeasureRest({ items })
+      ? [{ item: items[0]!, offset: ZERO, length: capacity }]
+      : topLevelPositions(items);
+
+  for (const { item, offset: itemOffset, length } of positions) {
+    if (item.kind !== "tuplet") continue;
+    const end = add(itemOffset, length);
+    if (!lt(offset, itemOffset) && lt(offset, end)) {
+      const localOffset = mul(sub(offset, itemOffset), frac(item.ratio.actual, item.ratio.normal));
+      const nextScale = mul(scale, frac(item.ratio.normal, item.ratio.actual));
+      return resolveWriteTarget(item, localOffset, tupletCapacity(item), false, nextScale);
     }
   }
+  return { owner, offset, capacity, allowSoleMeasureRest, scale };
+}
 
+/** The total notated length of a tuplet's own items (`actual` copies of `unit`), i.e. its capacity in its own local grid. */
+function tupletCapacity(group: TupletGroup): Fraction {
+  return mul(frac(group.ratio.actual), notatedToFraction(notated(group.ratio.unit)));
+}
+
+/**
+ * True if `[spanStart, spanEnd)` overlaps any leaf event nested inside a tuplet that
+ * is itself one of `items` (i.e. writing this span from outside would reach into a
+ * tuplet). Coordinates are local to `items`. Reuses `positionedEvents` (which already
+ * flattens nested tuplets correctly) by wrapping `items` as a throwaway voice.
+ */
+function overlapsNestedTuplet(items: VoiceItem[], spanStart: Fraction, spanEnd: Fraction): boolean {
+  for (const pe of positionedEvents({ id: "scan", index: 0, items })) {
+    if (pe.tuplets.length === 0) continue;
+    const end = add(pe.offset, pe.length);
+    if (lt(pe.offset, spanEnd) && lt(spanStart, end)) return true;
+  }
+  return false;
+}
+
+/** Core refusal check shared by `canWrite` and the duration-changing commands: does `len` fit at `offset` within a container of `capacity`, without reaching into a nested tuplet from outside it? */
+function spanRefusal(
+  items: VoiceItem[],
+  capacity: Fraction,
+  offset: Fraction,
+  len: Fraction,
+  allowSoleMeasureRest: boolean,
+  capacityLabel: string,
+): string | null {
+  const spanEnd = add(offset, len);
+  if (lt(capacity, spanEnd)) {
+    return `${capacityLabel}: ${fracToString(offset)} + ${fracToString(len)} exceeds ${fracToString(capacity)}`;
+  }
+  const isSole = allowSoleMeasureRest && isSoleMeasureRest({ items });
+  if (!isSole && overlapsNestedTuplet(items, offset, spanEnd)) {
+    return "Cannot write into a tuplet yet";
+  }
   return null;
+}
+
+/** A copy of `event` with a new notated `duration`, keeping the same id, notes (ids, pitches, ties) and every other field. */
+function withDuration(event: Event, duration: NotatedDuration): Event {
+  if (event.kind === "rest") return { ...event, duration };
+  return { ...event, duration, notes: event.notes.map((n) => ({ ...n })) };
 }
 
 /** The prefix of `event` before the write span starts, re-expressed to fit `prefixLen`. */
@@ -165,23 +277,25 @@ export function writeEvent(cursor: Cursor, event: NoteEvent | RestEvent): Comman
 }
 
 /**
- * Core span-replace: in the voice addressed by `cursor`, replaces [cursor.offset,
- * cursor.offset + spanLen) with `newItems`. Shared by `writeEvent` (single item) and
- * `writeSequence` (one call per measure-bounded chunk of a split event). Callers are
- * responsible for checking `canWrite` first (this never refuses).
+ * Core span-replace within one container's items (a voice's top-level items, or a
+ * tuplet's own items when the write resolved inside it): replaces [spanStart,
+ * spanStart + spanLen) with `newItems`. Shared by `writeSpan` and the
+ * duration-changing commands (`setDurationAt`/`toggleDotAt`). Callers are
+ * responsible for checking `spanRefusal`/`canWrite` first (this never refuses).
  */
-function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newItems: VoiceItem[]): void {
-  const part = draft.parts[cursor.partIndex]!;
-  const pm = part.measures[cursor.measureIndex]!;
-  const sm = pm.staves[cursor.staffIndex]!;
-  const voice = sm.voices[cursor.voiceIndex]!;
-
-  const spanStart = cursor.offset;
+function spanReplace(
+  items: VoiceItem[],
+  spanStart: Fraction,
+  spanLen: Fraction,
+  newItems: VoiceItem[],
+  allowSoleMeasureRest: boolean,
+  capacity: Fraction,
+): VoiceItem[] {
   const spanEnd = add(spanStart, spanLen);
-
-  const positions = isSoleMeasureRest(voice)
-    ? [{ item: voice.items[0]!, offset: ZERO, length: measureLengthAt(draft, cursor.measureIndex) }]
-    : topLevelPositions(voice.items);
+  const positions =
+    allowSoleMeasureRest && isSoleMeasureRest({ items })
+      ? [{ item: items[0]!, offset: ZERO, length: capacity }]
+      : topLevelPositions(items);
 
   const out: VoiceItem[] = [];
   let insertedNew = false;
@@ -192,8 +306,8 @@ function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newIt
       out.push(item);
       continue;
     }
-    // Guarded by canWrite (called by every caller before writeSpan): an overlapping
-    // item here is never a tuplet.
+    // Guarded by canWrite/spanRefusal (called by every caller before this): an
+    // overlapping item here is never a tuplet.
     const ev = item as Event;
     if (lt(offset, spanStart)) {
       out.push(...prefixPieces(ev, sub(spanStart, offset)));
@@ -207,9 +321,56 @@ function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newIt
     }
   }
   if (!insertedNew) out.push(...newItems);
+  return out;
+}
 
-  voice.items = out;
-  normalizeVoice(voice);
+/**
+ * Writes `newItems` at `cursor` in the voice it addresses, resolving into an
+ * enclosing tuplet's own grid first if the cursor's offset lies inside one (see
+ * `resolveWriteTarget`). If the voice doesn't exist yet, creates it (index
+ * `cursor.voiceIndex`, filled with a measureRest, per docs/ARCHITECTURE.md's Voices
+ * M2 contract) and keeps `sm.voices` sorted by index. Shared by `writeEvent` (single
+ * item) and `writeSequence` (one call per measure-bounded chunk of a split event).
+ * Callers are responsible for checking `canWrite` first (this never refuses).
+ */
+function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newItems: VoiceItem[]): void {
+  const part = draft.parts[cursor.partIndex]!;
+  const pm = part.measures[cursor.measureIndex]!;
+  const sm = pm.staves[cursor.staffIndex]!;
+  let voice = sm.voices.find((v) => v.index === cursor.voiceIndex);
+  if (!voice) {
+    voice = emptyVoice(cursor.voiceIndex);
+    sm.voices.push(voice);
+    sm.voices.sort((a, b) => a.index - b.index);
+  }
+  const measureLen = measureLengthAt(draft, cursor.measureIndex);
+
+  const target = resolveWriteTarget(voice, cursor.offset, measureLen, true);
+  const out = spanReplace(target.owner.items, target.offset, spanLen, newItems, target.allowSoleMeasureRest, target.capacity);
+  target.owner.items = out;
+  if (target.allowSoleMeasureRest) normalizeVoice(voice);
+}
+
+/**
+ * The sounding length a write of `notatedLen` at `cursor` would actually advance the
+ * cursor by: `notatedLen` unchanged at top level, or scaled down by the enclosing
+ * tuplet ratios if `cursor.offset` lies inside one (see `resolveWriteTarget`'s
+ * `scale`). Used by step-entry so cursor advancement inside a tuplet matches the
+ * tuplet's own sounding rate rather than the notated one.
+ */
+export function soundingLengthAt(score: Score, cursor: Cursor, notatedLen: Fraction): Fraction {
+  const voice = score.parts[cursor.partIndex]?.measures[cursor.measureIndex]?.staves[cursor.staffIndex]?.voices.find(
+    (v) => v.index === cursor.voiceIndex,
+  );
+  if (!voice) return notatedLen;
+  let measureLen: Fraction;
+  try {
+    measureLen = measureLengthAt(score, cursor.measureIndex);
+  } catch {
+    return notatedLen;
+  }
+  const target = resolveWriteTarget(voice, cursor.offset, measureLen, true);
+  return mul(notatedLen, target.scale);
 }
 
 /** Ensures the score has at least `measureIndex + 1` measures, appending empty ones (same logic as `addMeasures`, so the final barline follows) as needed. */
@@ -439,4 +600,198 @@ export function transposeNotes(noteIds: readonly string[], by: { semitones: numb
 /** Appends one empty measure to the end of the score. */
 export function appendMeasure(): Command {
   return addMeasures(1);
+}
+
+// ---------------------------------------------------------------------------
+// Duration changes on existing events, and tuplets.
+// ---------------------------------------------------------------------------
+
+/** Shared body of `setDurationAt`/`toggleDotAt`: span-replace the event at `eventId` in place, keeping its id/notes/ties, using the same rules as `writeEvent` (a longer duration overwrites following time, a shorter one fills with rests), refusing across a barline or into a tuplet from outside. Works whether the event is at the top level of a voice or inside a tuplet (using the tuplet's own notated capacity as the boundary instead of the measure's). */
+function applyDurationChange(draft: Draft<Score>, eventId: string, duration: NotatedDuration): void {
+  const hit = locateEvent(draft, eventId);
+  if (!hit) throw new Error(`setDurationAt: no event with id "${eventId}"`);
+
+  const positions = topLevelPositions(hit.items);
+  const at = positions[hit.index];
+  if (!at) throw new Error(`setDurationAt: internal error locating event "${eventId}"`);
+
+  const spanStart = at.offset;
+  const newLen = notatedToFraction(duration);
+  const allowSoleMeasureRest = hit.tuplets.length === 0;
+  const capacity = allowSoleMeasureRest
+    ? measureLengthAt(draft, hit.measureIndex)
+    : tupletCapacity(hit.tuplets[hit.tuplets.length - 1]!);
+
+  const refusal = spanRefusal(
+    hit.items,
+    capacity,
+    spanStart,
+    newLen,
+    allowSoleMeasureRest,
+    allowSoleMeasureRest ? "Does not fit in the measure" : "Does not fit in the tuplet",
+  );
+  if (refusal) throw new WriteRefused(refusal);
+
+  const updated = withDuration(hit.event, duration);
+  const out = spanReplace(hit.items, spanStart, newLen, [updated], allowSoleMeasureRest, capacity);
+  if (allowSoleMeasureRest) {
+    hit.voice.items = out;
+    normalizeVoice(hit.voice);
+  } else {
+    hit.tuplets[hit.tuplets.length - 1]!.items = out;
+  }
+}
+
+/**
+ * Changes the notated duration of the event with id `eventId`, replacing it in place
+ * (same id, notes, ties) using the span-replace rules from docs/ARCHITECTURE.md: a
+ * longer duration overwrites following time (trimmed to rests at the far end), a
+ * shorter one leaves the freed time as rests. Throws `WriteRefused` if the new span
+ * would cross the barline, or reach into a tuplet from outside it (or, for an event
+ * that itself lives inside a tuplet, past that tuplet's own notated end).
+ */
+export function setDurationAt(eventId: string, duration: NotatedDuration): Command {
+  return {
+    label: "Set duration",
+    apply(draft) {
+      applyDurationChange(draft, eventId, duration);
+    },
+  };
+}
+
+/** Toggles the augmentation dots on the event with id `eventId`: 0 -> 1 -> 0; an existing double/triple dot also collapses straight to 0. Same span-replace/refusal rules as `setDurationAt`. */
+export function toggleDotAt(eventId: string): Command {
+  return {
+    label: "Toggle dot",
+    apply(draft) {
+      const hit = locateEvent(draft, eventId);
+      if (!hit) throw new Error(`toggleDotAt: no event with id "${eventId}"`);
+      const dots: NotatedDuration["dots"] = hit.event.duration.dots === 0 ? 1 : 0;
+      applyDurationChange(draft, eventId, { base: hit.event.duration.base, dots });
+    },
+  };
+}
+
+/** Toggles whether the rest with id `eventId` is drawn (still occupies time either way). Used by the "h" key on the current selection. */
+export function toggleRestInvisible(eventId: string): Command {
+  return {
+    label: "Toggle rest visibility",
+    apply(draft) {
+      const hit = locateEvent(draft, eventId);
+      if (!hit) throw new Error(`toggleRestInvisible: no event with id "${eventId}"`);
+      if (hit.event.kind !== "rest") throw new Error(`toggleRestInvisible: event "${eventId}" is not a rest`);
+      hit.event.invisible = !hit.event.invisible;
+    },
+  };
+}
+
+interface LocatedTuplet {
+  group: TupletGroup;
+  /** The array directly holding `group` — a voice's top-level items, or an enclosing TupletGroup's items (for a nested tuplet). */
+  items: VoiceItem[];
+  index: number;
+  voice: Voice;
+  measureIndex: number;
+}
+
+function findTupletInItems(items: VoiceItem[], id: string): { items: VoiceItem[]; index: number; group: TupletGroup } | undefined {
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    if (item.kind !== "tuplet") continue;
+    if (item.id === id) return { items, index, group: item };
+    const nested = findTupletInItems(item.items, id);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+/** Finds a TupletGroup by id anywhere in the score, including nested inside another tuplet. */
+function locateTuplet(score: Draft<Score>, id: string): LocatedTuplet | undefined {
+  for (const part of score.parts) {
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const pm = part.measures[measureIndex]!;
+      for (const sm of pm.staves) {
+        for (const voice of sm.voices) {
+          const hit = findTupletInItems(voice.items, id);
+          if (hit) return { ...hit, voice, measureIndex };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Turns the event with id `eventId` (of notated duration `d`, no dots) into a
+ * `TupletGroup` of `actual` notes in the time of `normal`, per docs/ARCHITECTURE.md:
+ * unit = d / normal (e.g. quarter / 2 = eighth, for a 3:2 triplet), containing the
+ * original event (same id/notes/ties, shortened to `unit`) first, then `actual - 1`
+ * rests of `unit`. The group occupies exactly the same sounding span the original
+ * event did, so this never touches surrounding events. Refuses (`WriteRefused`) if
+ * `d` has dots, or `d / normal` isn't a plain note value (e.g. a quarter can't make a
+ * 5:4 tuplet: quarter/4 = sixteenth * ... doesn't land on a single note value only
+ * when base*normal isn't itself a supported note value).
+ */
+export function makeTuplet(eventId: string, actual: number, normal: number): Command {
+  return {
+    label: "Make tuplet",
+    apply(draft) {
+      const hit = locateEvent(draft, eventId);
+      if (!hit) throw new Error(`makeTuplet: no event with id "${eventId}"`);
+      const d = hit.event.duration;
+      if (d.dots !== 0) {
+        throw new WriteRefused("Cannot make a tuplet from a dotted duration");
+      }
+      const unitDen = d.base * normal;
+      if (!(NOTE_VALUES as readonly number[]).includes(unitDen)) {
+        throw new WriteRefused(`A ${actual}:${normal} tuplet doesn't divide this duration into a plain note value`);
+      }
+      const unit = unitDen as NoteValue;
+
+      const original = withDuration(hit.event, notated(unit, 0));
+      const fillers: RestEvent[] = Array.from({ length: Math.max(0, actual - 1) }, () => rest(unit, 0));
+      const group: TupletGroup = {
+        kind: "tuplet",
+        id: newId(),
+        ratio: { actual, normal, unit },
+        items: [original, ...fillers],
+      };
+      hit.items.splice(hit.index, 1, group);
+    },
+  };
+}
+
+/**
+ * Replaces the tuplet group with id `tupletId` by its first item stretched to the
+ * group's total notated (sounding, at the level containing it) length, if that
+ * length is representable as a single notated value; otherwise by rests of that
+ * length. (A first item that is itself a nested tuplet can't be "stretched" as a
+ * single event, so that case always falls back to rests.)
+ */
+export function removeTuplet(tupletId: string): Command {
+  return {
+    label: "Remove tuplet",
+    apply(draft) {
+      const hit = locateTuplet(draft, tupletId);
+      if (!hit) throw new Error(`removeTuplet: no tuplet with id "${tupletId}"`);
+
+      const totalLen = itemLength(hit.group);
+      const first = hit.group.items[0];
+
+      let replacement: VoiceItem[];
+      if (first && first.kind !== "tuplet") {
+        try {
+          const decomposed = decomposeDuration(totalLen);
+          replacement = decomposed.length === 1 ? [withDuration(first, decomposed[0]!)] : restsFor(totalLen);
+        } catch {
+          replacement = restsFor(totalLen);
+        }
+      } else {
+        replacement = restsFor(totalLen);
+      }
+
+      hit.items.splice(hit.index, 1, ...replacement);
+      if (hit.items === hit.voice.items) normalizeVoice(hit.voice);
+    },
+  };
 }

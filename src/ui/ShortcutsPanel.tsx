@@ -13,6 +13,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["1 / 2 / 4", "Whole / half / quarter"],
       ["8 / 6 / 3", "Eighth / 16th / 32nd"],
       [".", "Toggle dot (Alt+. double dot)"],
+      ["(entry off) 1-8/.", "With a selection: set duration / toggle dot on it instead"],
     ],
   },
   {
@@ -34,12 +35,29 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: "Voices",
+    rows: [
+      ["V", "Cycle the cursor's voice 0 ↔ 1"],
+      ["⌘⌥1 … ⌘⌥4", "Set the cursor's voice directly"],
+      ["H", "Toggle invisible on selected rest(s)"],
+    ],
+  },
+  {
+    title: "Notation",
+    rows: [
+      ["S", "Slur (first/last selected, or to the next note)"],
+      ["< / >", "Crescendo / diminuendo hairpin"],
+      ["⌘3 / ⌘5 / ⌘6 / ⌘7", "Triplet / quintuplet / sextuplet / septuplet"],
+      ["⌘2 / ⌘9", "Duplet (2:3) / 9:8 tuplet"],
+    ],
+  },
+  {
     title: "Navigate",
     rows: [
       ["← / →", "Previous / next note"],
       ["Home / End", "Start / end of measure"],
       ["⌘← / ⌘→", "Previous / next measure"],
-      ["Tab", "Switch treble / bass staff"],
+      ["Tab", "Cycle through all staves of the part"],
       ["Click", "Select a note or place the cursor"],
     ],
   },

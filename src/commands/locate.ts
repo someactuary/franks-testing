@@ -65,10 +65,11 @@ export function locateEvent(score: Score, eventId: string): LocatedEvent | undef
       const pm = part.measures[measureIndex]!;
       for (let staffIndex = 0; staffIndex < pm.staves.length; staffIndex++) {
         const sm = pm.staves[staffIndex]!;
-        for (let voiceIndex = 0; voiceIndex < sm.voices.length; voiceIndex++) {
-          const voice = sm.voices[voiceIndex]!;
+        // `voice.index` (a Cursor's voiceIndex), not array position: the voices
+        // array is sorted by index but may be sparse (e.g. voice 2 without voice 1).
+        for (const voice of sm.voices) {
           const hit = findEventInItems(voice.items, eventId, []);
-          if (hit) return { ...hit, voice, partIndex, measureIndex, staffIndex, voiceIndex };
+          if (hit) return { ...hit, voice, partIndex, measureIndex, staffIndex, voiceIndex: voice.index };
         }
       }
     }

@@ -8,8 +8,19 @@ import { add, cmp, lt, newId, notated, notatedToFraction, ZERO, type NoteValue, 
 import { keyAlter, STEPS, type Alter, type Pitch, type Step } from "@/model/pitch";
 import { locateNote } from "@/commands/locate";
 import { addMeasures, removeMeasure, toggleTie } from "@/commands/basic";
-import { addNoteToEvent, appendMeasure, canWrite, eraseEvent, setNoteAlter, transposeNotes, writeEvent } from "@/commands/edit";
+import {
+  addNoteToEvent,
+  appendMeasure,
+  canWrite,
+  eraseEvent,
+  setNoteAlter,
+  soundingLengthAt,
+  toggleRestInvisible,
+  transposeNotes,
+  writeEvent,
+} from "@/commands/edit";
 import type { Command } from "@/commands/types";
+import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
 import {
   absoluteOffset,
@@ -50,6 +61,19 @@ export function defaultEditorState(score: Score): EditorState {
  * 6 sixteenth, 3 thirty-second. 5, 7, 9 are unused (not in this map; the digit is ignored).
  */
 const DURATION_DIGITS: Record<string, NoteValue> = { "1": 1, "2": 2, "4": 4, "8": 8, "6": 16, "3": 32 };
+
+/** mod+alt+1..4 -> voice index 0..3 (see docs/ARCHITECTURE.md's Voices M2 contract). */
+const VOICE_DIGITS: Record<string, number> = { "1": 0, "2": 1, "3": 2, "4": 3 };
+
+/** mod+digit -> a tuplet ratio, applied via the "tuplet" action. */
+const TUPLET_SHORTCUTS: Record<string, { actual: number; normal: number }> = {
+  "3": { actual: 3, normal: 2 },
+  "5": { actual: 5, normal: 4 },
+  "6": { actual: 6, normal: 4 },
+  "7": { actual: 7, normal: 4 },
+  "2": { actual: 2, normal: 3 },
+  "9": { actual: 9, normal: 8 },
+};
 
 /**
  * Among referenceOctave-1/+0/+1, the octave that puts `step` diatonically closest to
@@ -186,7 +210,10 @@ function enter(state: EditorState, event: { kind: "note"; pitch: Pitch } | { kin
 
   const commands: Command[] = [writeEvent(cursor, noteEvent)];
   let measureIndex = cursor.measureIndex;
-  let offset = add(cursor.offset, len);
+  // Advance by the SOUNDING length: inside a tuplet, `len` (notated) overstates how
+  // far the cursor should move (see docs/ARCHITECTURE.md's tuplet contract).
+  const soundingLen = soundingLengthAt(score, cursor, len);
+  let offset = add(cursor.offset, soundingLen);
 
   const measureLen = measureLength(score, cursor.measureIndex);
   if (!lt(offset, measureLen)) {
@@ -229,6 +256,44 @@ export const handleKey: KeyHandler = (state, key) => {
     if (measureCount <= 1) return { commands: [], message: "Cannot remove the only measure" };
     const measureIndex = Math.min(cursor.measureIndex, measureCount - 2);
     return { commands: [removeMeasure(cursor.measureIndex)], cursor: { ...cursor, measureIndex, offset: ZERO } };
+  }
+
+  // mod+alt+1..4: set the cursor's voice directly (1-based digit -> 0-based voice index).
+  if (key.mod && key.alt && key.key in VOICE_DIGITS) {
+    const voiceIndex = VOICE_DIGITS[key.key]!;
+    return { commands: [], cursor: { ...cursor, voiceIndex }, message: `Voice ${voiceIndex + 1}` };
+  }
+
+  // "v": cycles the cursor's voice 0 <-> 1.
+  if (!key.mod && lower === "v") {
+    const voiceIndex = cursor.voiceIndex === 0 ? 1 : 0;
+    return { commands: [], cursor: { ...cursor, voiceIndex }, message: `Voice ${voiceIndex + 1}` };
+  }
+
+  // "h": toggles whether the selected rest(s) are drawn (they still occupy time).
+  if (!key.mod && lower === "h") {
+    const rests = resolveSelection(score, state.selection).filter((r) => r.event.kind === "rest");
+    if (rests.length === 0) return null;
+    return { commands: rests.map((r) => toggleRestInvisible(r.event.id)) };
+  }
+
+  // mod+digit: wrap the tuplet action's ratio shortcuts (3:2, 5:4, 6:4, 7:4, 2:3, 9:8).
+  if (key.mod && !key.alt && key.key in TUPLET_SHORTCUTS) {
+    const { actual, normal } = TUPLET_SHORTCUTS[key.key]!;
+    return handleAction(state, { kind: "tuplet", actual, normal });
+  }
+
+  // "s": slur action.
+  if (!key.mod && lower === "s") {
+    return handleAction(state, { kind: "slur" });
+  }
+
+  // "<" / ">" (i.e. shift+"," / shift+"."): crescendo / diminuendo hairpin.
+  if (key.key === "<") {
+    return handleAction(state, { kind: "hairpin", shape: "cresc" });
+  }
+  if (key.key === ">") {
+    return handleAction(state, { kind: "hairpin", shape: "dim" });
   }
 
   // Clipboard.
@@ -294,6 +359,15 @@ export const handleKey: KeyHandler = (state, key) => {
   if (!key.mod && (key.key === "Backspace" || key.key === "Delete") && state.selection.ids.length > 0) {
     const erased = eraseSelected(state);
     return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+  }
+
+  // With entry OFF and something selected, duration digits / "." apply straight to the
+  // selection (setDuration/toggleDot) instead of changing the pending entry duration.
+  if (!entry.active && state.selection.ids.length > 0 && key.key in DURATION_DIGITS) {
+    return handleAction(state, { kind: "setDuration", base: DURATION_DIGITS[key.key]!, dots: entry.dots });
+  }
+  if (!entry.active && state.selection.ids.length > 0 && key.key === ".") {
+    return handleAction(state, { kind: "toggleDot" });
   }
 
   if (entry.active && key.key in DURATION_DIGITS) {
@@ -364,7 +438,10 @@ export const handleKey: KeyHandler = (state, key) => {
   }
 
   if (key.key === "Tab") {
-    return { commands: [], cursor: { ...cursor, staffIndex: cursor.staffIndex === 0 ? 1 : 0 } };
+    // Cycles through ALL staves of the part (0 -> 1 -> ... -> n-1 -> 0), not just two.
+    const staffCount = score.parts[cursor.partIndex]?.staves.length ?? 1;
+    const staffIndex = (cursor.staffIndex + 1) % staffCount;
+    return { commands: [], cursor: { ...cursor, staffIndex } };
   }
 
   if (key.key === "Home") {

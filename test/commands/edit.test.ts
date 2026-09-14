@@ -9,6 +9,8 @@ import {
   note,
   pitchToString,
   rest,
+  sub,
+  type NoteEvent,
   type Pitch,
   type Score,
   type VoiceItem,
@@ -20,7 +22,9 @@ import {
   canWrite,
   eraseEvent,
   removeNoteFromEvent,
+  setDurationAt,
   setNoteAlter,
+  toggleDotAt,
   transposeNotes,
   writeEvent,
   WriteRefused,
@@ -183,7 +187,7 @@ describe("writeEvent", () => {
     expect(() => produce(score, (d) => writeEvent(cursor, note("E4", 2)).apply(d))).toThrow(WriteRefused);
   });
 
-  it("refuses to write into a span that intersects a tuplet", () => {
+  it("a cursor positioned inside a tuplet writes into the tuplet's own grid instead of refusing (see Task 3 / M2 tuplet contracts)", () => {
     const score = newPianoScore({ measureCount: 1 });
     const voice = voiceOf(score, 0);
     const n1 = note("C4", 8);
@@ -195,10 +199,40 @@ describe("writeEvent", () => {
       rest(4), // 1/4
     ];
 
-    const cursor = cursorAt(0, frac(0));
+    const cursor = cursorAt(0, frac(0)); // exactly the tuplet's start: inside it
     const len = notatedToFraction(notated(8));
+    expect(canWrite(score, cursor, len)).toBeNull();
+
+    const next = produce(score, (d) => writeEvent(cursor, note("F4", 8)).apply(d));
+    const tuplet = voiceOf(next, 0).items[0]!;
+    if (tuplet.kind !== "tuplet") throw new Error("expected a tuplet");
+    expect(tuplet.items).toHaveLength(3); // shape unchanged: still 3 eighths in the triplet
+    const first = tuplet.items[0]!;
+    if (first.kind !== "note") throw new Error("expected a note");
+    expect(first.notes[0]!.pitch.step).toBe("F"); // replaced in place, tuplet untouched otherwise
+    const second = tuplet.items[1]!;
+    const third = tuplet.items[2]!;
+    if (second.kind !== "note" || third.kind !== "note") throw new Error("expected notes");
+    expect(second.notes[0]!.pitch.step).toBe("D");
+    expect(third.notes[0]!.pitch.step).toBe("E");
+  });
+
+  it("refuses a write that starts outside a tuplet but would reach into it", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const n1 = note("C4", 8);
+    const n2 = note("D4", 8);
+    const n3 = note("E4", 8);
+    voice.items = [
+      rest(4), // 1/4, untouched lead-in
+      { kind: "tuplet", id: "tup", ratio: { actual: 3, normal: 2, unit: 8 }, items: [n1, n2, n3] }, // sounds 1/4, at [1/4, 1/2)
+      rest(2), // 1/2
+    ];
+
+    const cursor = cursorAt(0, frac(0)); // before the tuplet
+    const len = notatedToFraction(notated(2)); // a half note spans into the tuplet
     expect(canWrite(score, cursor, len)).toMatch(/tuplet/i);
-    expect(() => produce(score, (d) => writeEvent(cursor, note("F4", 8)).apply(d))).toThrow(WriteRefused);
+    expect(() => produce(score, (d) => writeEvent(cursor, note("F4", 2)).apply(d))).toThrow(WriteRefused);
   });
 });
 
@@ -346,5 +380,124 @@ describe("appendMeasure", () => {
 
     expect(next.measures).toHaveLength(3);
     expect(next.parts[0]!.measures).toHaveLength(3);
+  });
+});
+
+describe("setDurationAt", () => {
+  it("shortening an event fills the freed time with rests, keeping the same id/notes", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const ev = note("C4", 2); // half note
+    const noteId = ev.notes[0]!.id;
+    voice.items = [ev, rest(2)];
+
+    const next = produce(score, (d) => setDurationAt(ev.id, notated(4)).apply(d));
+
+    const items = voiceOf(next, 0).items;
+    expect(items).toHaveLength(3);
+    expect(items[0]!.id).toBe(ev.id); // same identity
+    expect(asEvent(items[0]!).duration).toEqual({ base: 4, dots: 0 });
+    if (items[0]!.kind !== "note") throw new Error("expected a note");
+    expect(items[0]!.notes[0]!.id).toBe(noteId);
+    expect(items[1]!.kind).toBe("rest"); // freed quarter
+    expect(asEvent(items[1]!).duration).toEqual({ base: 4, dots: 0 });
+    expect(items[2]!.kind).toBe("rest"); // untouched trailing half
+  });
+
+  it("lengthening an event overwrites following time, trimming a following note's tail to rests", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const c = note("C4", 4);
+    const d = note("D4", 2);
+    voice.items = [c, d, rest(4)]; // 1/4 + 1/2 + 1/4
+
+    const next = produce(score, (draft) => setDurationAt(c.id, notated(2)).apply(draft));
+
+    const items = voiceOf(next, 0).items;
+    expect(items[0]!.id).toBe(c.id);
+    expect(asEvent(items[0]!).duration).toEqual({ base: 2, dots: 0 });
+    expect(items[1]!.kind).toBe("rest"); // D's remaining quarter, re-expressed as a rest
+    expect(asEvent(items[1]!).duration).toEqual({ base: 4, dots: 0 });
+    expect(items[2]!.kind).toBe("rest"); // untouched trailing quarter
+  });
+
+  it("refuses a duration change that would cross the barline", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const ev = note("C4", 4);
+    voice.items = [rest(4), ev, rest(2)]; // ev starts at offset 1/4; a whole note there would overflow the measure
+
+    expect(() => produce(score, (d) => setDurationAt(ev.id, notated(1)).apply(d))).toThrow(WriteRefused);
+  });
+
+  it("refuses a duration change that would reach into an existing tuplet from outside", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const ev = note("C4", 4);
+    const n1 = note("D4", 8);
+    const n2 = note("E4", 8);
+    const n3 = note("F4", 8);
+    voice.items = [
+      ev, // [0, 1/4)
+      { kind: "tuplet", id: "tup", ratio: { actual: 3, normal: 2, unit: 8 }, items: [n1, n2, n3] }, // [1/4, 1/2)
+      rest(2), // [1/2, 1)
+    ];
+
+    expect(() => produce(score, (d) => setDurationAt(ev.id, notated(2)).apply(d))).toThrow(WriteRefused);
+  });
+
+  it("changes the duration of an event that itself lives inside a tuplet, refusing past the tuplet's own end", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const n1 = note("C4", 8);
+    const n2 = note("D4", 8);
+    const n3 = note("E4", 8);
+    voice.items = [
+      { kind: "tuplet", id: "tup", ratio: { actual: 3, normal: 2, unit: 8 }, items: [n1, n2, n3] },
+      rest(2),
+      rest(4),
+    ];
+
+    // 16th fits in n1's slot and frees a 16th rest inside the tuplet.
+    const next = produce(score, (d) => setDurationAt(n1.id, notated(16)).apply(d));
+    const tuplet = voiceOf(next, 0).items[0]!;
+    if (tuplet.kind !== "tuplet") throw new Error("expected a tuplet");
+    expect(tuplet.items.map((i) => asEvent(i).duration)).toEqual([
+      { base: 16, dots: 0 },
+      { base: 16, dots: 0 },
+      { base: 8, dots: 0 },
+      { base: 8, dots: 0 },
+    ]);
+
+    // A half note doesn't fit inside the triplet's 3/8 capacity: refused.
+    expect(() => produce(score, (d) => setDurationAt(n1.id, notated(2)).apply(d))).toThrow(WriteRefused);
+  });
+});
+
+describe("toggleDotAt", () => {
+  it("cycles 0 -> 1 -> 0 dots", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const ev = note("C4", 4);
+    voice.items = [ev, rest(4), rest(2)];
+
+    const once = produce(score, (d) => toggleDotAt(ev.id).apply(d));
+    expect(asEvent(voiceOf(once, 0).items[0]!).duration).toEqual({ base: 4, dots: 1 });
+
+    const twice = produce(once, (d) => toggleDotAt(ev.id).apply(d));
+    expect(asEvent(voiceOf(twice, 0).items[0]!).duration).toEqual({ base: 4, dots: 0 });
+  });
+
+  it("collapses an existing double/triple dot straight to 0 (not to 1)", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const ev = note("C4", 4);
+    const doubled: NoteEvent = { ...ev, duration: { base: 4, dots: 2 } }; // 7/16
+    voice.items = [doubled, ...restsFor(sub(frac(1), notatedToFraction(doubled.duration)))];
+
+    const next = produce(score, (d) => toggleDotAt(doubled.id).apply(d));
+
+    const updated = voiceOf(next, 0).items[0]!;
+    expect(asEvent(updated).duration).toEqual({ base: 4, dots: 0 });
   });
 });
