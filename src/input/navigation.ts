@@ -4,9 +4,9 @@
  */
 import { add, eq, lt, positionedEvents, ZERO, type Fraction } from "@/model";
 import type { KeySignature, Score } from "@/model";
-import type { Event } from "@/commands/locate";
+import { locateEvent, locateNote, type Event } from "@/commands/locate";
 import { measureLengthAt } from "@/commands/edit";
-import type { Cursor } from "./types";
+import type { Cursor, Selection } from "./types";
 
 export { measureLengthAt as measureLength };
 
@@ -98,4 +98,64 @@ export function keySignatureAt(score: Score, measureIndex: number): KeySignature
     if (ma.keySig) key = ma.keySig;
   }
   return key;
+}
+
+/** Absolute time (sum of every prior measure's length, plus `offset`) at `(measureIndex, offset)`. */
+export function absoluteOffset(score: Score, measureIndex: number, offset: Fraction): Fraction {
+  let t = ZERO;
+  for (let i = 0; i < measureIndex; i++) t = add(t, measureLengthAt(score, i));
+  return add(t, offset);
+}
+
+/** Selection ids for one event: the note ids for a NoteEvent (so highlighting is per notehead), the event id for a rest. */
+export function idsForEvent(event: Event): string[] {
+  return event.kind === "note" ? event.notes.map((n) => n.id) : [event.id];
+}
+
+/** One selected event, resolved from a selection id, with enough location info to erase/copy/sort it. */
+export interface SelectedEvent {
+  event: Event;
+  partIndex: number;
+  measureIndex: number;
+  staffIndex: number;
+  voiceIndex: number;
+  /** Measure-relative offset. */
+  offset: Fraction;
+  /** True if the event lives inside a tuplet (top-level `writeEvent`/`writeSequence` can't touch it). */
+  inTuplet: boolean;
+}
+
+/**
+ * Resolves `selection.ids` (note ids or rest/event ids) to their owning events,
+ * deduplicated by event id (a chord's several note ids collapse to one entry). Stale
+ * ids that no longer resolve to anything in `score` are silently dropped. Pure.
+ */
+export function resolveSelection(score: Score, selection: Selection): SelectedEvent[] {
+  const seen = new Set<string>();
+  const out: SelectedEvent[] = [];
+  for (const id of selection.ids) {
+    const noteHit = locateNote(score, id);
+    const located = locateEvent(score, noteHit ? noteHit.event.id : id);
+    if (!located || seen.has(located.event.id)) continue;
+    seen.add(located.event.id);
+
+    const voiceCursor: Cursor = {
+      partIndex: located.partIndex,
+      measureIndex: located.measureIndex,
+      staffIndex: located.staffIndex,
+      voiceIndex: located.voiceIndex,
+      offset: ZERO,
+    };
+    const positioned = eventsInVoice(score, voiceCursor).find((pe) => pe.event.id === located.event.id);
+    out.push({
+      event: located.event,
+      partIndex: located.partIndex,
+      measureIndex: located.measureIndex,
+      staffIndex: located.staffIndex,
+      voiceIndex: located.voiceIndex,
+      offset: positioned?.offset ?? ZERO,
+      inTuplet: located.tuplets.length > 0,
+    });
+  }
+  return out;
 }
