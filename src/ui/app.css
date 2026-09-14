@@ -195,6 +195,37 @@ body {
   opacity: 0.8;
 }
 
+.lyric-status {
+  color: #e07be0;
+  font-weight: 600;
+}
+
+/* MIDI toolbar control */
+.toolbar-midi {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.toolbar-hint {
+  font-size: 0.8rem;
+  color: #bbb;
+}
+
+.midi-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #777;
+  flex: none;
+}
+
+.midi-dot-on {
+  background: #3ecf5f;
+  box-shadow: 0 0 4px rgba(62, 207, 95, 0.8);
+}
+
 .voice-toggle {
   font: inherit;
   font-size: 0.75rem;
