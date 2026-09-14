@@ -186,8 +186,8 @@ export function hitTestPoint(layout: LayoutResult, pageIndex: number, xSp: numbe
   let staffIndex = system.staves[0]!.staffIndex;
   let staffDist = Infinity;
   for (const st of system.staves) {
-    const top = st.y;
-    const bottom = st.y + (st.lineCount - 1);
+    const top = system.y + st.y;
+    const bottom = top + (st.lineCount - 1);
     const d = distanceToRange(ySp, top, bottom);
     if (d < staffDist) {
       staffDist = d;
