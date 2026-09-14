@@ -371,3 +371,8 @@ score canvas is custom SVG either way).
   - Courtesy key signature at the end of a system before a key change still missing.
   - No "Pasted" status message; first Right-arrow from measure start skips the first note.
   - No lyrics yet (needed for choral work); no part names beyond staff names.
+- 2026-09-14 (M3 start): contracts for lyrics (model + engraving/entry rules), MIDI
+  handler, MusicXML signatures, fflate for .mxl. Fan-out: Opus MusicXML import/export +
+  corpus; Opus lyrics/ornaments/arpeggio/tremolo engraving; Sonnet lyric entry mode,
+  MIDI spelling/entry, small fixes; Sonnet MIDI device UI, lyric-mode status, MusicXML
+  open/export.
