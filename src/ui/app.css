@@ -117,6 +117,10 @@ body {
 .page {
   position: relative;
   line-height: 0;
+  /* Shift/mod-click multi-select and rubber-band drag must not trigger the
+     browser's native text selection over the SVG <text> glyphs. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .page svg {
