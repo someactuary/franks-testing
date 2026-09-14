@@ -370,3 +370,218 @@ describe("handleKey: unhandled keys", () => {
     expect(h.press({ key: "c" })).toBeNull(); // entry not active: letter is unhandled
   });
 });
+
+describe("handleKey: clipboard", () => {
+  it("mod+c with nothing selected reports 'Nothing selected' and sets no clipboard", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    const result = h.press({ key: "c", mod: true });
+
+    expect(result?.commands).toEqual([]);
+    expect(result?.message).toMatch(/nothing selected/i);
+    expect(h.clipboard).toBeNull();
+  });
+
+  it("mod+c copies the selected note and reports how many", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" }); // enters C4; selects it
+
+    const result = h.press({ key: "c", mod: true });
+
+    expect(result?.message).toMatch(/copied 1 notes/i);
+    expect(h.clipboard).not.toBeNull();
+    expect(h.clipboard!.staves[0]!.items).toHaveLength(1);
+  });
+
+  it("mod+v pastes two copied quarters at another measure with the same pitches", () => {
+    const h = new Harness(newPianoScore({ measureCount: 3 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" });
+    h.press({ key: "d" });
+    // select both just-entered notes
+    h.selection = { ids: [h.voiceItems(0)[0]!.id, h.voiceItems(0)[1]!.id] };
+    h.press({ key: "c", mod: true });
+
+    h.cursor = { partIndex: 0, measureIndex: 2, staffIndex: 0, voiceIndex: 0, offset: frac(0) };
+    h.selection = { ids: [] };
+    h.press({ key: "v", mod: true });
+
+    const items = h.voiceItems(2);
+    const spelled = items.slice(0, 2).map((it) => {
+      if (it.kind !== "note") throw new Error("expected a note event");
+      return it.notes[0]!.pitch.step;
+    });
+    expect(spelled).toEqual(["C", "D"]);
+    expect(h.selection.ids).toEqual([]);
+    expect(h.cursor).toMatchObject({ measureIndex: 2, offset: frac(1, 2) });
+  });
+
+  it("mod+v with nothing copied reports 'Nothing to paste'", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    const result = h.press({ key: "v", mod: true });
+    expect(result?.message).toMatch(/nothing to paste/i);
+  });
+
+  it("mod+x copies then erases the selection, leaving rests", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" }); // enters and selects C4
+
+    h.press({ key: "x", mod: true });
+
+    expect(h.clipboard).not.toBeNull();
+    expect(h.selection.ids).toEqual([]);
+    const items = h.voiceItems(0);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.kind).toBe("rest");
+    expect(asRest(items[0]!).measureRest).toBe(true);
+    expect(h.cursor.offset).toEqual(frac(0));
+  });
+});
+
+describe("handleKey: measures", () => {
+  it('"Enter" inserts an empty measure right after the cursor measure', () => {
+    const h = new Harness(newPianoScore({ measureCount: 2 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" }); // measure 0 now has a note
+    h.cursor = { ...h.cursor, measureIndex: 0, offset: frac(0) };
+
+    h.press({ key: "Enter" });
+
+    expect(h.history.current.parts[0]!.measures).toHaveLength(3);
+    // the note is still in measure 0; the new empty measure is at index 1
+    expect(h.voiceItems(0)[0]!.kind).toBe("note");
+    const inserted = h.history.current.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items;
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]!.kind).toBe("rest");
+  });
+
+  it("Shift+Enter inserts an empty measure before the cursor measure and keeps the cursor on the same music", () => {
+    const h = new Harness(newPianoScore({ measureCount: 2 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" }); // measure 0 has a note
+    h.cursor = { ...h.cursor, measureIndex: 0, offset: frac(0) };
+
+    h.press({ key: "Enter", shift: true });
+
+    expect(h.history.current.parts[0]!.measures).toHaveLength(3);
+    expect(h.cursor.measureIndex).toBe(1); // followed its music into the shifted slot
+    const music = h.history.current.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items;
+    expect(music[0]!.kind).toBe("note");
+    const insertedBefore = h.history.current.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(insertedBefore[0]!.kind).toBe("rest");
+  });
+
+  it("mod+Backspace removes the cursor measure", () => {
+    const h = new Harness(newPianoScore({ measureCount: 2 }));
+    h.cursor = { ...h.cursor, measureIndex: 1 };
+
+    h.press({ key: "Backspace", mod: true });
+
+    expect(h.history.current.parts[0]!.measures).toHaveLength(1);
+    expect(h.cursor).toMatchObject({ measureIndex: 0, offset: frac(0) });
+  });
+
+  it("mod+Delete refuses to remove the only measure", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    const result = h.press({ key: "Delete", mod: true });
+
+    expect(result?.commands).toEqual([]);
+    expect(result?.message).toMatch(/only measure/i);
+    expect(h.history.current.parts[0]!.measures).toHaveLength(1);
+  });
+});
+
+describe("handleKey: selection erase and extend", () => {
+  it("Delete with a multi-note selection erases every selected note", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    const e = note("E4", 4);
+    voice.items = [c, d, e, rest(4)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id, e.notes[0]!.id] }; // two of the three notes
+
+    h.press({ key: "Delete" });
+
+    const items = h.voiceItems(0);
+    expect(items[0]!.kind).toBe("rest");
+    expect(items[1]!.kind).toBe("note"); // D was not selected, stays a note
+    expect(items[2]!.kind).toBe("rest");
+    expect(h.selection.ids).toEqual([]);
+    expect(h.cursor.offset).toEqual(frac(0)); // earliest erased event (C) was at offset 0
+  });
+
+  it("Backspace with a multi-note selection also erases every selected note (not just before the cursor)", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id, d.notes[0]!.id] };
+
+    h.press({ key: "Backspace" });
+
+    expect(h.voiceItems(0)).toHaveLength(1);
+    expect(h.voiceItems(0)[0]!.kind).toBe("rest");
+    expect(asRest(h.voiceItems(0)[0]!).measureRest).toBe(true);
+  });
+
+  it("shift+ArrowRight grows the selection to include the next event and moves the cursor there", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.cursor = { ...h.cursor, offset: frac(0) };
+    h.selection = { ids: [c.notes[0]!.id] };
+
+    h.press({ key: "ArrowRight", shift: true });
+
+    expect(h.selection.ids).toEqual(expect.arrayContaining([c.notes[0]!.id, d.notes[0]!.id]));
+    expect(h.cursor.offset).toEqual(frac(1, 4));
+  });
+
+  it("shift+ArrowLeft grows the selection to include the previous event", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.cursor = { ...h.cursor, offset: frac(1, 4) }; // at D's own start
+    h.selection = { ids: [d.notes[0]!.id] };
+
+    h.press({ key: "ArrowLeft", shift: true });
+
+    expect(h.selection.ids).toEqual(expect.arrayContaining([c.notes[0]!.id, d.notes[0]!.id]));
+    expect(h.cursor.offset).toEqual(frac(0));
+  });
+
+  it("mod+a selects every event on both staves", () => {
+    const score = newPianoScore({ measureCount: 2 });
+    const treble0 = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const bass0 = score.parts[0]!.measures[0]!.staves[1]!.voices[0]!;
+    const c = note("C4", 1); // fills measure 0's treble staff entirely
+    const g = note("C3", 1);
+    treble0.items = [c];
+    bass0.items = [g];
+    // measure 1 keeps its default whole-measure rests on both staves.
+    const h = new Harness(score);
+
+    h.press({ key: "a", mod: true });
+
+    // 1 note id (treble m0) + 1 rest id (treble m1) + 1 note id (bass m0) + 1 rest id (bass m1)
+    expect(h.selection.ids).toHaveLength(4);
+    expect(h.selection.ids).toContain(c.notes[0]!.id);
+    expect(h.selection.ids).toContain(g.notes[0]!.id);
+  });
+});
