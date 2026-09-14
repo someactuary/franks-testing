@@ -20,6 +20,7 @@ import {
   clefGlyph,
   clefGlyphStep,
   glyphBox,
+  keyCancellationLayout,
   keySignatureLayout,
   stepToY,
   timeSigDigitGlyphs,
@@ -56,10 +57,44 @@ export interface MeasurePrefix {
 
 export interface PrefixSpec {
   showClef: boolean;
+  /** The key signature to draw (the key in force at a system start, the new key at a change). */
   key?: KeySignature;
+  /** Set only at a key change: the outgoing key, whose accidentals may need cancelling. */
+  cancelKey?: KeySignature;
   timeSig?: TimeSignature;
   /** Clef in force for each staff of the system, in `staves` order. */
   clefs: ClefKind[];
+}
+
+/** One accidental of the key block (cancellation naturals first, then the new key). */
+interface KeyBlockItem {
+  glyph: string;
+  staffStep: number;
+  /** Gap to leave before this glyph. */
+  gapBefore: number;
+}
+
+function keyBlock(spec: PrefixSpec, clef: ClefKind): KeyBlockItem[] {
+  const out: KeyBlockItem[] = [];
+  if (!spec.key) return out;
+  const cancels = spec.cancelKey ? keyCancellationLayout(spec.cancelKey, spec.key, clef) : [];
+  for (const a of cancels) {
+    out.push({
+      glyph: a.glyph,
+      staffStep: a.staffStep,
+      gapBefore: out.length === 0 ? 0 : ENGRAVING.keyAccidentalGapSp,
+    });
+  }
+  for (const [i, a] of keySignatureLayout(spec.key, clef).entries()) {
+    const gapBefore =
+      out.length === 0 ? 0 : i === 0 ? ENGRAVING.keyCancelGapSp : ENGRAVING.keyAccidentalGapSp;
+    out.push({ glyph: a.glyph, staffStep: a.staffStep, gapBefore });
+  }
+  return out;
+}
+
+function keyBlockWidth(font: SmuflFontData, items: KeyBlockItem[]): number {
+  return items.reduce((w, it) => w + it.gapBefore + glyphBox(font, it.glyph).width, 0);
 }
 
 /** Lay out the clef / key / time block at the start of a measure. */
@@ -69,27 +104,17 @@ export function layoutPrefix(
   spec: PrefixSpec,
 ): MeasurePrefix {
   const showClef = spec.showClef;
-  const showKey = spec.key !== undefined && spec.key.fifths !== 0;
   const showTime = spec.timeSig !== undefined;
 
-  // A key signature of 0 sharps still has to be *declared* when it changes, but
-  // M0 never draws naturals to cancel a previous key, so fifths === 0 is empty.
   const clefWidth = showClef
     ? Math.max(0, ...spec.clefs.map((c) => glyphBox(font, clefGlyph(c)).width))
     : 0;
 
-  let keyWidth = 0;
-  if (showKey && spec.key) {
-    for (const clef of spec.clefs) {
-      const accs = keySignatureLayout(spec.key, clef);
-      let w = 0;
-      for (const [i, a] of accs.entries()) {
-        if (i > 0) w += ENGRAVING.keyAccidentalGapSp;
-        w += glyphBox(font, a.glyph).width;
-      }
-      keyWidth = Math.max(keyWidth, w);
-    }
-  }
+  // The key block is the cancellation naturals (if any) followed by the new key's
+  // accidentals; C major with nothing to cancel is empty and takes no width.
+  const blocks = spec.clefs.map((clef) => keyBlock(spec, clef));
+  const keyWidth = Math.max(0, ...blocks.map((b) => keyBlockWidth(font, b)));
+  const showKey = blocks.some((b) => b.length > 0);
 
   let timeWidth = 0;
   if (showTime && spec.timeSig) {
@@ -119,12 +144,12 @@ export function layoutPrefix(
         role: "clef",
       });
     }
-    if (showKey && spec.key) {
+    if (showKey) {
       let kx = keyX;
-      for (const [j, a] of keySignatureLayout(spec.key, clef).entries()) {
-        if (j > 0) kx += ENGRAVING.keyAccidentalGapSp;
-        glyphs.push({ glyph: a.glyph, x: kx, y: stepToY(0, a.staffStep), role: "keysig" });
-        kx += glyphBox(font, a.glyph).width;
+      for (const item of blocks[i] ?? keyBlock(spec, clef)) {
+        kx += item.gapBefore;
+        glyphs.push({ glyph: item.glyph, x: kx, y: stepToY(0, item.staffStep), role: "keysig" });
+        kx += glyphBox(font, item.glyph).width;
       }
     }
     if (showTime && spec.timeSig) {
@@ -260,14 +285,17 @@ export function buildMeasureSpacing(args: {
   staves: StaffMeasureLayout[];
   barline: BarlineStyle;
   defaults: EngravingDefaults;
+  /** Extra fixed space before the first column (e.g. room for a tie continuing from the previous system). */
+  extraLead?: number;
 }): MeasureSpacing {
   const columns = buildColumns(args.staves);
   const bw = barlineWidth(args.barline, args.defaults);
+  const lead = ENGRAVING.measureLeadSp + (args.extraLead ?? 0);
 
   const head =
     columns.length === 0
-      ? args.prefix.width + ENGRAVING.measureLeadSp
-      : args.prefix.width + ENGRAVING.measureLeadSp + columns[0]!.left;
+      ? args.prefix.width + lead
+      : args.prefix.width + lead + columns[0]!.left;
 
   const advances: number[] = [];
   const weights: number[] = [];

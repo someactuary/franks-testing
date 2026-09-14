@@ -17,6 +17,43 @@ function fillWithQuarters(score: ReturnType<typeof makeScore>, pitches = ["C5", 
   }
 }
 
+describe("measure columns", () => {
+  it("gives a measure holding only a measure rest a single column at offset 0", () => {
+    // newPianoScore fills every staff with one whole-measure rest.
+    const score = makeScore({ measureCount: 1 });
+    const m = system(run(score)).measures[0]!;
+    expect(m.columns).toHaveLength(1);
+    expect(m.columns[0]!.offset).toEqual(frac(0, 1));
+    expect(m.columns[0]!.x).toBeGreaterThan(m.x);
+    expect(m.columns[0]!.x).toBeLessThan(m.x + m.width);
+  });
+
+  it("keeps the measure-rest column even when the other staff has notes", () => {
+    const score = makeScore({ measureCount: 1 });
+    setStaff(score, 0, 0, [note("C5", 4), note("D5", 4), note("E5", 4), note("F5", 4)]);
+    const m = system(run(score)).measures[0]!;
+    // The bass staff's measure rest shares the quarter-note column at offset 0.
+    expect(m.columns).toHaveLength(4);
+    expect(m.columns[0]!.offset).toEqual(frac(0, 1));
+  });
+
+  it("lists one column per distinct onset, in time order", () => {
+    const score = makeScore({ measureCount: 1 });
+    setStaff(score, 0, 0, [note("C5", 4), note("D5", 4), note("E5", 2)]);
+    setStaff(score, 0, 1, [note("C3", 2), note("G2", 4), note("E2", 4)]);
+    const m = system(run(score)).measures[0]!;
+    expect(m.columns.map((c) => `${c.offset.num}/${c.offset.den}`)).toEqual([
+      "0/1",
+      "1/4",
+      "1/2",
+      "3/4",
+    ]);
+    for (let i = 1; i < m.columns.length; i++) {
+      expect(m.columns[i]!.x).toBeGreaterThan(m.columns[i - 1]!.x);
+    }
+  });
+});
+
 describe("duration-proportional column widths", () => {
   it("grows logarithmically with duration", () => {
     const quarter = idealColumnWidth(frac(1, 4));

@@ -1,5 +1,5 @@
 import { engrave } from "@/engraving/engrave";
-import type { GlyphPrim, LayoutResult, LinePrim, PolygonPrim, Primitive, Ref, TextPrim } from "@/engraving/layout-types";
+import type { GlyphPrim, LayoutResult, LinePrim, PathPrim, PolygonPrim, Primitive, Ref, TextPrim } from "@/engraving/layout-types";
 import { notated, type NoteValue } from "@/model/duration";
 import { newPianoScore } from "@/model/factory";
 import { newId } from "@/model/ids";
@@ -59,6 +59,10 @@ export function lines(prims: Primitive[]): LinePrim[] {
 
 export function polygons(prims: Primitive[]): PolygonPrim[] {
   return prims.filter((p): p is PolygonPrim => p.type === "polygon");
+}
+
+export function paths(prims: Primitive[]): PathPrim[] {
+  return prims.filter((p): p is PathPrim => p.type === "path");
 }
 
 export function texts(prims: Primitive[]): TextPrim[] {

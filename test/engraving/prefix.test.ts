@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { note, rest } from "@/model/factory";
-import { glyphBox, keySignatureLayout } from "@/engraving/geometry";
+import { glyphBox, keyCancellationLayout, keySignatureLayout } from "@/engraving/geometry";
+import { minuet } from "../fixtures/minuet";
 import {
   allSystems,
   FONT,
@@ -95,6 +96,105 @@ describe("key signatures", () => {
     const flats = glyphs(withRole(system(run(score)).primitives, "keysig"));
     expect(flats).toHaveLength(4);
     expect(flats.every((f) => f.glyph === "accidentalFlat")).toBe(true);
+  });
+
+  it("repeats the key signature at the start of every system", () => {
+    const score = makeScore({ measureCount: 40, keySig: { fifths: 3, mode: "major" } });
+    for (let m = 0; m < 40; m++) {
+      setStaff(score, m, 0, [note("C5", 4), note("D5", 4), note("E5", 4), note("F5", 4)]);
+      setStaff(score, m, 1, [note("C3", 2), note("G2", 2)]);
+    }
+    const systems = allSystems(run(score));
+    expect(systems.length).toBeGreaterThan(1);
+    for (const sys of systems) {
+      const keysig = glyphs(withRole(sys.primitives, "keysig"));
+      // Exactly one signature per staff at the system start, nowhere else.
+      expect(keysig).toHaveLength(6);
+      expect(keysig.every((g) => g.glyph === "accidentalSharp")).toBe(true);
+    }
+  });
+
+  it("shows the minuet's F sharp on its second system", () => {
+    const systems = allSystems(run(minuet()));
+    expect(systems.length).toBeGreaterThan(1);
+    for (const sys of systems) {
+      expect(glyphs(withRole(sys.primitives, "keysig"), "accidentalSharp")).toHaveLength(2);
+    }
+  });
+});
+
+describe("key changes", () => {
+  function threeMeasures(from: { fifths: number }, to: { fifths: number }) {
+    const score = makeScore({ measureCount: 3, keySig: { fifths: from.fifths, mode: "major" } });
+    score.measures[1]!.keySig = { fifths: to.fifths, mode: "major" };
+    for (let m = 0; m < 3; m++) {
+      setStaff(score, m, 0, [note("C5", 4), note("D5", 4), note("E5", 4), note("F5", 4)]);
+      setStaff(score, m, 1, [note("C3", 2), note("G2", 2)]);
+    }
+    return glyphs(withRole(system(run(score)).primitives, "keysig"));
+  }
+
+  const count = (gs: ReturnType<typeof glyphs>, glyph: string) =>
+    gs.filter((g) => g.glyph === glyph).length;
+
+  it("cancels the whole outgoing key when the new key is C major", () => {
+    const gs = threeMeasures({ fifths: 2 }, { fifths: 0 });
+    // Two sharps at the system start, then two naturals per staff at the change.
+    expect(count(gs, "accidentalSharp")).toBe(4);
+    expect(count(gs, "accidentalNatural")).toBe(4);
+  });
+
+  it("cancels only the accidentals that are dropped", () => {
+    const gs = threeMeasures({ fifths: 2 }, { fifths: 1 });
+    expect(count(gs, "accidentalNatural")).toBe(2); // one per staff
+    expect(count(gs, "accidentalSharp")).toBe(4 + 2); // start (2 per staff) + change (1 per staff)
+  });
+
+  it("cancels everything when the key flips from sharps to flats", () => {
+    const gs = threeMeasures({ fifths: 2 }, { fifths: -1 });
+    expect(count(gs, "accidentalNatural")).toBe(4);
+    expect(count(gs, "accidentalFlat")).toBe(2);
+  });
+
+  it("cancels nothing when the key gains accidentals of the same kind", () => {
+    const gs = threeMeasures({ fifths: 1 }, { fifths: 3 });
+    expect(count(gs, "accidentalNatural")).toBe(0);
+    expect(count(gs, "accidentalSharp")).toBe(2 + 6);
+  });
+
+  it("draws the cancellation and the new key at a system start", () => {
+    const score = makeScore({ measureCount: 4, keySig: { fifths: 2, mode: "major" } });
+    score.measures[2]!.keySig = { fifths: 0, mode: "major" };
+    score.layout.systemBreaks = [2];
+    for (let m = 0; m < 4; m++) {
+      setStaff(score, m, 0, [note("C5", 4), note("D5", 4), note("E5", 4), note("F5", 4)]);
+      setStaff(score, m, 1, [note("C3", 2), note("G2", 2)]);
+    }
+    const systems = allSystems(run(score));
+    expect(systems).toHaveLength(2);
+    const second = glyphs(withRole(systems[1]!.primitives, "keysig"));
+    expect(second.filter((g) => g.glyph === "accidentalNatural")).toHaveLength(4);
+    expect(second.filter((g) => g.glyph === "accidentalSharp")).toHaveLength(0);
+    // The naturals follow the clef.
+    const clef = glyphs(withRole(systems[1]!.primitives, "clef"))[0]!;
+    for (const n of second) expect(n.x).toBeGreaterThan(clef.x);
+  });
+
+  it("orders the cancellation naturals like the key they replace", () => {
+    const naturals = keyCancellationLayout(
+      { fifths: 3, mode: "major" },
+      { fifths: 0, mode: "major" },
+      "treble",
+    );
+    expect(naturals.map((a) => a.step)).toEqual(["F", "C", "G"]);
+    expect(naturals.map((a) => a.staffStep)).toEqual([4, 1, 5]);
+    expect(naturals.every((a) => a.glyph === "accidentalNatural")).toBe(true);
+  });
+
+  it("cancels nothing when there was no key to cancel", () => {
+    expect(
+      keyCancellationLayout({ fifths: 0, mode: "major" }, { fifths: -3, mode: "major" }, "bass"),
+    ).toEqual([]);
   });
 });
 
