@@ -4,7 +4,7 @@
  * `KeyHandler`. This file owns *applying* KeyHandler results — the handler
  * itself never mutates anything (see docs/ARCHITECTURE.md "Editor contracts").
  */
-import { useMemo, useRef, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { History } from "@/commands/history";
 import { newPianoScore } from "@/model/factory";
 import type { Score } from "@/model";
@@ -227,11 +227,7 @@ export interface EditorStoreApi extends EditorSnapshot {
 
 /** One `EditorStore` for the lifetime of the component, wired into React via `useSyncExternalStore`. */
 export function useEditorStore(initialScore: Score, keyHandler: KeyHandler): EditorStoreApi {
-  const storeRef = useRef<EditorStore | null>(null);
-  if (storeRef.current === null) {
-    storeRef.current = new EditorStore(initialScore, keyHandler);
-  }
-  const store = storeRef.current;
+  const [store] = useState(() => new EditorStore(initialScore, keyHandler));
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
 
   return useMemo(
