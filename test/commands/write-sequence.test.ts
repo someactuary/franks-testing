@@ -131,7 +131,7 @@ describe("writeSequence", () => {
     }
   });
 
-  it("sequenceFits reports false when the write would touch an existing tuplet", () => {
+  it("sequenceFits reports true for a write that resolves inside a tuplet and fits its grid", () => {
     const score = newPianoScore({ measureCount: 1 });
     const voice = voiceOf(score, 0);
     const n1 = note("C4", 8);
@@ -143,7 +143,24 @@ describe("writeSequence", () => {
       rest(4),
     ];
 
-    expect(sequenceFits(score, cursorAt(0), [note("F4", 8)])).toBe(false);
+    // cursor at 0 is the tuplet's own start: an eighth fits its first slot.
+    expect(sequenceFits(score, cursorAt(0), [note("F4", 8)])).toBe(true);
+    // cursor at 1/4 is right after the tuplet: plenty of room in the rest of the measure.
     expect(sequenceFits(score, cursorAt(0, frac(1, 4)), [note("F4", 2)])).toBe(true);
+  });
+
+  it("sequenceFits reports false when a write starting outside an existing tuplet would reach into it", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const n1 = note("C4", 8);
+    const n2 = note("D4", 8);
+    const n3 = note("E4", 8);
+    voice.items = [
+      rest(4), // [0, 1/4)
+      { kind: "tuplet", id: "tup", ratio: { actual: 3, normal: 2, unit: 8 }, items: [n1, n2, n3] }, // [1/4, 1/2)
+      rest(2), // [1/2, 1)
+    ];
+
+    expect(sequenceFits(score, cursorAt(0), [note("F4", 2)])).toBe(false); // half note from offset 0 reaches into the tuplet
   });
 });
