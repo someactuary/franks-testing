@@ -6,8 +6,12 @@ import { engrave } from "@/engraving";
 import type { Ref } from "@/engraving/layout-types";
 import { newPianoScore } from "@/model/factory";
 import type { NoteValue, TimeSignature } from "@/model/duration";
+import type { Score } from "@/model";
+import { allEvents, findEvent } from "@/model/traverse";
 import { parseScore, serializeScore } from "@/io/pscore";
-import type { KeyStroke } from "@/input/types";
+import { importMusicXml, exportMusicXml, MusicXmlError } from "@/io/musicxml";
+import { DEFAULT_ENTRY_STATE } from "@/input/types";
+import type { KeyStroke, MidiNoteOn } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
 import { ShortcutsPanel } from "./ShortcutsPanel";
@@ -17,9 +21,14 @@ import { newSatbScore } from "./presets";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
 import { handleAction } from "@/input/actions";
+import { stubMidiHandler } from "./stub-midi-handler";
+import { MidiInputs, WEB_MIDI_UNSUPPORTED_MESSAGE } from "./midi";
+import type { MidiInputInfo } from "./midi";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
+
+const MIDI_INPUT_STORAGE_KEY = "pmn.midiInput";
 
 const FIXTURE_NAMES = Object.keys(FIXTURES);
 
@@ -67,6 +76,42 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 function isMac(): boolean {
   return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+}
+
+/** Lowercased file extension without the dot, or "" if there isn't one. */
+function extensionOf(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
+}
+
+/** Best-effort localStorage read/write: private-mode/disabled storage never throws out here. */
+function readStoredMidiInput(): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(MIDI_INPUT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMidiInput(id: string): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(MIDI_INPUT_STORAGE_KEY, id);
+  } catch {
+    // best-effort only
+  }
+}
+
+/** Triggers a browser download of `content` as `filename`. */
+function downloadFile(filename: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 interface NewScoreFormProps {
@@ -148,7 +193,15 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
-  const editor = useEditorStore(initialScore, handleKey, handleAction);
+  const editor = useEditorStore(initialScore, handleKey, handleAction, stubMidiHandler);
+
+  const [midi] = useState(() => new MidiInputs());
+  const [midiSupported] = useState(() => midi.isSupported());
+  const [midiGranted, setMidiGranted] = useState(false);
+  const [midiInputsList, setMidiInputsList] = useState<MidiInputInfo[]>([]);
+  const [midiSelectedId, setMidiSelectedId] = useState<string | null>(null);
+  const [midiError, setMidiError] = useState<string | null>(null);
+  const midiSelectedRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +216,85 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  const selectMidiInput = useCallback(
+    (id: string | null) => {
+      midi.select(id);
+      midiSelectedRef.current = id;
+      setMidiSelectedId(id);
+      if (id) writeStoredMidiInput(id);
+    },
+    [midi],
+  );
+
+  /** Re-reads the visible input ports (initial grant, and every hot-plug event) and keeps a valid selection: the previous pick if it's still there, else the remembered localStorage id, else the first input. */
+  const refreshMidiInputs = useCallback(() => {
+    const list = midi.inputs();
+    setMidiInputsList(list);
+    const current = midiSelectedRef.current;
+    if (current && list.some((i) => i.id === current)) return; // still connected, MidiInputs already has it selected
+    const stored = readStoredMidiInput();
+    const next = (stored && list.some((i) => i.id === stored) ? stored : list[0]?.id) ?? null;
+    selectMidiInput(next);
+  }, [midi, selectMidiInput]);
+
+  async function handleConnectMidi() {
+    setMidiError(null);
+    try {
+      await midi.request();
+      setMidiGranted(true);
+      refreshMidiInputs();
+    } catch (err) {
+      setMidiError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  useEffect(() => {
+    return midi.onStateChange(() => refreshMidiInputs());
+  }, [midi, refreshMidiInputs]);
+
+  const { applyMidi } = editor;
+  useEffect(() => {
+    return midi.onNoteOn((ev) => {
+      applyMidi(ev);
+    });
+  }, [midi, applyMidi]);
+
+  // Dev-only test hook (see docs on window.__pmnMidiTest): lets a Playwright/console
+  // script push a synthetic MidiNoteOn straight into the store, without a real MIDI
+  // device — Web MIDI reports zero devices in headless/CI browsers. Lives here (not
+  // main.tsx) because that's where the store is; never present in a production build.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __pmnMidiTest?: (ev: MidiNoteOn) => void };
+    w.__pmnMidiTest = (ev: MidiNoteOn) => applyMidi(ev);
+    return () => {
+      delete w.__pmnMidiTest;
+    };
+  }, [applyMidi]);
+
+  // Dev-only test hook to preview lyric-mode UI: the real L-key handler
+  // (src/input/step-entry.ts) hasn't landed yet, so there's no in-app way to enter
+  // lyric mode. Tags the first note event in the score with a lyric and points
+  // entry.lyric at it, via the same store.setEntry used for App's own state.
+  const { loadScore, setEntry } = editor;
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __pmnDevSetLyric?: (verse: number, text: string) => void };
+    w.__pmnDevSetLyric = (verse: number, text: string) => {
+      const cloned = structuredClone(editor.score) as Score;
+      const firstNote = Array.from(allEvents(cloned)).find((e) => e.positioned.event.kind === "note");
+      if (!firstNote) return;
+      const event = firstNote.positioned.event;
+      if (event.kind !== "note") return;
+      event.lyrics = [{ verse, text, syllabic: "single" }];
+      loadScore(cloned);
+      setEntry({ ...DEFAULT_ENTRY_STATE, active: true, lyric: { eventId: event.id, verse } });
+    };
+    return () => {
+      delete w.__pmnDevSetLyric;
+    };
+  }, [editor.score, loadScore, setEntry]);
 
   const layout = useMemo(() => engrave(editor.score, { font: BRAVURA }), [editor.score]);
 
@@ -232,28 +364,39 @@ export function App() {
     const file = e.target.files?.[0] ?? null;
     e.target.value = "";
     if (!file) return;
+    const ext = extensionOf(file.name);
     try {
-      const text = await file.text();
-      const score = parseScore(text);
+      let score: Score;
+      if (ext === "mxl") {
+        score = importMusicXml(await file.arrayBuffer());
+      } else if (ext === "musicxml" || ext === "xml") {
+        score = importMusicXml(await file.text());
+      } else {
+        // .pscore, or anything unrecognized: try our own JSON format.
+        score = parseScore(await file.text());
+      }
       setIoMessage(null);
       setSampleName("");
       editor.loadScore(score);
     } catch (err) {
-      setIoMessage(err instanceof Error ? err.message : String(err));
+      if (err instanceof MusicXmlError) setIoMessage(err.message);
+      else setIoMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
   function handleSave() {
-    const text = serializeScore(editor.score);
-    const blob = new Blob([text], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${editor.score.meta.title || "score"}.pscore`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadFile(`${editor.score.meta.title || "score"}.pscore`, serializeScore(editor.score), "application/json");
+  }
+
+  function handleExportMusicXml() {
+    try {
+      const text = exportMusicXml(editor.score);
+      downloadFile(`${editor.score.meta.title || "score"}.musicxml`, text, "application/vnd.recordare.musicxml+xml");
+      setIoMessage(null);
+    } catch (err) {
+      if (err instanceof MusicXmlError) setIoMessage(err.message);
+      else setIoMessage(err instanceof Error ? err.message : String(err));
+    }
   }
 
   const handleClickElement = useCallback(
@@ -320,6 +463,17 @@ export function App() {
   const dots = ".".repeat(editor.entry.dots);
   const statusMessage = ioMessage ?? editor.message;
 
+  // Lyric mode (docs/ARCHITECTURE.md "M3 contracts > Lyrics"): reads the syllable text
+  // straight from the score so it always matches what's engraved. Not note entry, so
+  // the entry cursor line is hidden below (`entryActive`).
+  const lyric = editor.entry.lyric;
+  const lyricInfo = useMemo(() => {
+    if (!lyric) return null;
+    const event = findEvent(editor.score, lyric.eventId);
+    const text = event && event.kind === "note" ? (event.lyrics?.find((l) => l.verse === lyric.verse)?.text ?? "") : "";
+    return { verse: lyric.verse, text };
+  }, [editor.score, lyric]);
+
   return (
     <div className="app" data-font-ready={fontReady}>
       <style>{pageSizeCss}</style>
@@ -334,12 +488,15 @@ export function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pscore,application/json"
+          accept=".pscore,.musicxml,.xml,.mxl,application/json"
           style={{ display: "none" }}
           onChange={(e) => void handleFileChosen(e)}
         />
         <button type="button" onClick={handleSave}>
           Save
+        </button>
+        <button type="button" onClick={handleExportMusicXml}>
+          Export MusicXML
         </button>
         <button type="button" onClick={editor.undo} disabled={!editor.canUndo}>
           Undo
@@ -367,6 +524,39 @@ export function App() {
             ))}
           </select>
         </label>
+        <div className="toolbar-midi">
+          {!midiSupported ? (
+            <span className="toolbar-hint">{WEB_MIDI_UNSUPPORTED_MESSAGE}</span>
+          ) : !midiGranted ? (
+            <button type="button" onClick={() => void handleConnectMidi()}>
+              Connect MIDI
+            </button>
+          ) : (
+            <>
+              <span
+                className={`midi-dot${midiSelectedId ? " midi-dot-on" : ""}`}
+                title={midiSelectedId ? "MIDI input connected" : "No MIDI input selected"}
+                aria-hidden="true"
+              />
+              {midiInputsList.length === 0 ? (
+                <span className="toolbar-hint">No MIDI inputs</span>
+              ) : (
+                <select
+                  aria-label="MIDI input"
+                  value={midiSelectedId ?? ""}
+                  onChange={(e) => selectMidiInput(e.target.value || null)}
+                >
+                  {midiInputsList.map((input) => (
+                    <option key={input.id} value={input.id}>
+                      {input.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
+          {midiError && <span className="toolbar-hint">{midiError}</span>}
+        </div>
       </header>
       {newFormOpen && (
         <NewScoreForm onCreate={handleNewScore} onCreateSatb={handleNewSatb} onCancel={() => setNewFormOpen(false)} />
@@ -387,7 +577,7 @@ export function App() {
           idAttributes
           cursor={editor.cursor}
           selection={editor.selection}
-          entryActive={editor.entry.active}
+          entryActive={editor.entry.active && !lyricInfo}
           onClickElement={handleClickElement}
           onClickEmpty={handleClickEmpty}
           onSelectMany={handleSelectMany}
@@ -395,28 +585,33 @@ export function App() {
         />
       </main>
       <footer className="status-bar">
-        <span>
-          Measure {cursor.measureIndex + 1} &middot; Staff {clef} &middot; Voice {cursor.voiceIndex + 1}{" "}
-          <button
-            type="button"
-            className="voice-toggle"
-            title="Toggle voice 1 / 2"
-            onClick={() => editor.applyAction({ kind: "setVoice", voiceIndex: cursor.voiceIndex === 1 ? 0 : 1 })}
-          >
-            Voice 1/2
-          </button>
-          &middot; Duration {durationName}
-          {dots} &middot;{" "}
-          <span className={editor.entry.active ? "entry-on" : "entry-off"}>
-            {editor.entry.active ? "Note entry ON" : "Note entry OFF"}
+        {lyricInfo ? (
+          <span className="lyric-status">
+            Lyrics &middot; verse {lyricInfo.verse + 1} &middot; {lyricInfo.text}
           </span>
-        </span>
+        ) : (
+          <span>
+            Measure {cursor.measureIndex + 1} &middot; Staff {clef} &middot; Voice {cursor.voiceIndex + 1}{" "}
+            <button
+              type="button"
+              className="voice-toggle"
+              title="Toggle voice 1 / 2"
+              onClick={() => editor.applyAction({ kind: "setVoice", voiceIndex: cursor.voiceIndex === 1 ? 0 : 1 })}
+            >
+              Voice 1/2
+            </button>
+            &middot; Duration {durationName}
+            {dots} &middot;{" "}
+            <span className={editor.entry.active ? "entry-on" : "entry-off"}>
+              {editor.entry.active ? "Note entry ON" : "Note entry OFF"}
+            </span>
+          </span>
+        )}
         {statusMessage ? (
           <span className="status-bar-message">{statusMessage}</span>
         ) : (
-          !editor.entry.active && (
-            <span className="status-bar-hint">Press N to start entering notes, or click Shortcuts.</span>
-          )
+          !editor.entry.active &&
+          !lyricInfo && <span className="status-bar-hint">Press N to start entering notes, or click Shortcuts.</span>
         )}
       </footer>
     </div>
