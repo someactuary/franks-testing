@@ -105,3 +105,21 @@ describe("History", () => {
     expect(history.current.meta.title).toBe("t9"); // the oldest 10 snapshots were evicted
   });
 });
+
+describe("History.executeGroup", () => {
+  it("applies several commands as one undo step", async () => {
+    const { History } = await import("@/commands/history");
+    const { newPianoScore } = await import("@/model");
+    const { setTitle, addMeasures } = await import("@/commands/basic");
+    const h = new History(newPianoScore({ measureCount: 2 }));
+    h.executeGroup([setTitle("A"), addMeasures(1)]);
+    expect(h.current.meta.title).toBe("A");
+    expect(h.current.measures).toHaveLength(3);
+    expect(h.current.measures[2]!.barline).toBe("final");
+    expect(h.current.measures[1]!.barline).toBeUndefined();
+    expect(h.undo()).toBe(true);
+    expect(h.current.meta.title).toBeUndefined();
+    expect(h.current.measures).toHaveLength(2);
+    expect(h.undo()).toBe(false);
+  });
+});

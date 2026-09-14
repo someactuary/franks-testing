@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EditorStore } from "@/ui/store";
-import { stubKeyHandler } from "@/ui/stub-key-handler";
+import { stubKeyHandler } from "./stub-key-handler";
 import { setTitle } from "@/commands/basic";
 import { frac, newId, newPianoScore, note } from "@/model";
 import type { Score } from "@/model";

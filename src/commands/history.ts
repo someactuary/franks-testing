@@ -47,6 +47,24 @@ export class History {
     this.notify();
   }
 
+  /**
+   * Applies several commands as ONE undo step (e.g. everything a single keystroke does).
+   * Commands run in order on the same draft; a group that changes nothing is dropped.
+   */
+  executeGroup(cmds: readonly Command[]): void {
+    if (cmds.length === 0) return;
+    const next = produce(this.present, (draft) => {
+      for (const cmd of cmds) cmd.apply(draft);
+    });
+    if (next === this.present) return;
+
+    this.undoStack.push(this.present);
+    if (this.undoStack.length > MAX_HISTORY) this.undoStack.shift();
+    this.redoStack = [];
+    this.present = next;
+    this.notify();
+  }
+
   /** Reverts to the previous snapshot. Returns false (no-op) if there is nothing to undo. */
   undo(): boolean {
     const prev = this.undoStack.pop();

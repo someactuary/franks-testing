@@ -160,7 +160,7 @@ export class EditorStore {
 
     if (result.history === "undo") this.history.undo();
     else if (result.history === "redo") this.history.redo();
-    for (const cmd of result.commands) this.history.execute(cmd);
+    this.history.executeGroup(result.commands);
 
     let nextCursor = result.cursor ?? this.cursor;
     nextCursor = clampCursor(this.history.current, nextCursor);

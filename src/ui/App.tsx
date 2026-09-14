@@ -11,8 +11,7 @@ import type { KeyStroke } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
 import { useEditorStore } from "./store";
-// TEMPORARY: replaced by @/input/step-entry at merge
-import { stubKeyHandler } from "./stub-key-handler";
+import { handleKey } from "@/input/step-entry";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
@@ -134,7 +133,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
-  const editor = useEditorStore(initialScore, stubKeyHandler);
+  const editor = useEditorStore(initialScore, handleKey);
 
   useEffect(() => {
     let cancelled = false;

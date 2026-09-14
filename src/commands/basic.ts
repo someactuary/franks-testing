@@ -133,8 +133,15 @@ export function addMeasures(count: number, atIndex?: number): Command {
     label: "Add measures",
     apply(draft) {
       const insertAt = atIndex ?? draft.measures.length;
+      const appending = insertAt === draft.measures.length;
 
       const newMeasureAttrs: MeasureAttributes[] = Array.from({ length: count }, () => ({ id: newId() }));
+      // Appending after a final barline: the final barline moves to the new last measure.
+      const last = draft.measures[draft.measures.length - 1];
+      if (appending && last && last.barline === "final") {
+        delete last.barline;
+        newMeasureAttrs[newMeasureAttrs.length - 1]!.barline = "final";
+      }
       draft.measures.splice(insertAt, 0, ...newMeasureAttrs);
 
       for (const part of draft.parts) {

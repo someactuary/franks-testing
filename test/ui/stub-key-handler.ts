@@ -1,5 +1,5 @@
 /**
- * TEMPORARY navigation-only `KeyHandler` for developing/testing the UI shell
+ * Test-only navigation-only `KeyHandler` for developing/testing the UI shell
  * before the real step-entry handler (src/input/step-entry.ts) lands from a
  * parallel work stream. Deliberately minimal:
  *
