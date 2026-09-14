@@ -54,6 +54,12 @@ export const LYRICS = {
   widthRatio: 0.55,
   /** Padding added to a syllable's estimated width when it constrains a column. */
   padSp: 0.6,
+  /**
+   * Extra room a begin/middle syllable claims so the hyphen after it fits between
+   * the two syllables (two `gapSp` gaps plus the hyphen, less the padding already
+   * there). Split evenly round the column like the rest of the width.
+   */
+  hyphenAllowanceSp: 1.2,
   /** Ascent and descent of the lyric font, as fractions of its size. */
   ascentRatio: 0.8,
   descentRatio: 0.25,
@@ -61,8 +67,6 @@ export const LYRICS = {
   gapSp: 0.35,
   /** Hyphens repeat at least this often over a long gap. */
   hyphenPitchSp: 6.0,
-  /** A gap narrower than this is not worth a hyphen. */
-  hyphenMinGapSp: 0.3,
   /** Extender line. */
   extenderThicknessSp: 0.12,
   extenderMinSp: 0.6,
@@ -94,7 +98,9 @@ export function eventLyricWidth(ev: EventLayout): number {
   if (event.kind !== "note") return 0;
   let w = 0;
   for (const l of event.lyrics ?? []) {
-    if (l.text.length > 0) w = Math.max(w, lyricColumnWidth(l.text));
+    if (l.text.length === 0) continue;
+    const hyphen = l.syllabic === "begin" || l.syllabic === "middle";
+    w = Math.max(w, lyricColumnWidth(l.text) + (hyphen ? LYRICS.hyphenAllowanceSp : 0));
   }
   return w;
 }
@@ -273,7 +279,8 @@ function emitVerse(
 /**
  * Hyphens between a begin/middle syllable and the one that follows it: one in
  * the middle of a short gap, and evenly spaced repeats no further than
- * `hyphenPitchSp` apart over a long one.
+ * `hyphenPitchSp` apart over a long one. A cramped gap still gets its one
+ * hyphen — a missing hyphen misreads the word, a tight one does not.
  */
 function emitHyphens(
   sys: EmitSystem,
@@ -286,14 +293,16 @@ function emitHyphens(
   if (!next) return;
   const from = syl.centre + syl.halfWidth + LYRICS.gapSp;
   const to = next.centre - next.halfWidth - LYRICS.gapSp;
-  const span = to - from;
-  if (span < LYRICS.hyphenMinGapSp) return;
+  const span = Math.max(0, to - from);
   const count = Math.max(1, Math.ceil(span / LYRICS.hyphenPitchSp));
+  // Over a cramped gap `to` may sit left of `from`; the midpoint of the two
+  // syllables' facing edges is then the least bad place.
+  const start = to >= from ? from : (from + to) / 2;
   for (let k = 0; k < count; k++) {
     push(sys, {
       type: "text",
       text: "-",
-      x: from + (span * (k + 0.5)) / count,
+      x: start + (span * (k + 0.5)) / count,
       y: baseline,
       size: LYRICS.sizeSp,
       style: "lyric",

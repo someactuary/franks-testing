@@ -100,6 +100,22 @@ describe("lyrics", () => {
     expect(ys.size).toBe(1);
   });
 
+  it("reserves room for the hyphen between two hyphenated syllables", () => {
+    // Quarter notes, unjustified: without the allowance "hy" and "phen" would
+    // leave no gap at all for their hyphen.
+    const score = melody((events) => {
+      events[0]!.lyrics = [{ verse: 0, text: "hy", syllabic: "begin" }];
+      events[1]!.lyrics = [{ verse: 0, text: "phen", syllabic: "end" }];
+    });
+    const prims = lyricTexts(score);
+    const hy = prims.find((p) => p.text === "hy")!;
+    const phen = prims.find((p) => p.text === "phen")!;
+    const hyphen = prims.find((p) => p.text === "-")!;
+    const halfWidth = (text: string) => (text.length * LYRICS.sizeSp * LYRICS.widthRatio) / 2;
+    expect(hyphen.x - (hy.x + halfWidth("hy"))).toBeGreaterThanOrEqual(LYRICS.gapSp - 1e-6);
+    expect(phen.x - halfWidth("phen") - hyphen.x).toBeGreaterThanOrEqual(LYRICS.gapSp - 1e-6);
+  });
+
   it("draws a hyphen between begin/middle syllables but not after end/single", () => {
     const score = melody((events) => {
       events[0]!.lyrics = [{ verse: 0, text: "hy", syllabic: "begin" }];
@@ -118,12 +134,15 @@ describe("lyrics", () => {
   });
 
   it("repeats the hyphen over a long gap", () => {
-    // Two syllables a whole measure apart: far more than one hyphen pitch.
-    const score = makeScore({ measureCount: 2 });
+    // Two syllables three whole-note measures apart, the notes between them
+    // unsung: far more than one hyphen pitch of empty lane.
+    const score = makeScore({ measureCount: 4 });
     const a = sing(note("C5", 1), { verse: 0, text: "a", syllabic: "begin" });
     const b = sing(note("D5", 1), { verse: 0, text: "b", syllabic: "end" });
     setStaff(score, 0, 0, [a]);
-    setStaff(score, 1, 0, [b]);
+    setStaff(score, 1, 0, [note("E5", 1)]);
+    setStaff(score, 2, 0, [note("F5", 1)]);
+    setStaff(score, 3, 0, [b]);
 
     const hyphens = lyricTexts(score).filter((p) => p.text === "-");
     expect(hyphens.length).toBeGreaterThan(1);

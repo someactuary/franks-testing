@@ -15,7 +15,6 @@ import type { Id } from "@/model/ids";
 import type { Anchor, Articulation, Attachment, Ornament, Score } from "@/model/score";
 import type { NotatedDuration } from "@/model/duration";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
-import { ENGRAVING } from "./constants";
 import { glyphBox, STAFF_HEIGHT } from "./geometry";
 import { staffHasLyrics } from "./lyrics";
 import type { GlyphPrim, Primitive, Ref, TextPrim } from "./layout-types";
