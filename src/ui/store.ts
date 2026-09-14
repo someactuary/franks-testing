@@ -10,7 +10,21 @@ import { newPianoScore } from "@/model/factory";
 import type { Score } from "@/model";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { DEFAULT_ENTRY_STATE } from "@/input/types";
-import type { ClipboardContent, Cursor, EditorState, EntryState, KeyHandler, KeyStroke, Selection } from "@/input/types";
+import type {
+  ActionHandler,
+  ClipboardContent,
+  Cursor,
+  EditorState,
+  EntryState,
+  KeyHandler,
+  KeyResult,
+  KeyStroke,
+  PaletteAction,
+  Selection,
+} from "@/input/types";
+
+/** Default `actionHandler`: nothing is wired up, so every action is "not handled" (like an unbound key). */
+const NOOP_ACTION_HANDLER: ActionHandler = () => null;
 
 const AUTOSAVE_KEY = "pmn.autosave";
 const AUTOSAVE_DEBOUNCE_MS = 400;
@@ -85,6 +99,7 @@ export interface EditorSnapshot {
 export class EditorStore {
   private history: History;
   private readonly keyHandler: KeyHandler;
+  private readonly actionHandler: ActionHandler;
   private cursor: Cursor;
   private selection: Selection;
   private entry: EntryState;
@@ -94,8 +109,9 @@ export class EditorStore {
   private snapshot: EditorSnapshot;
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(initialScore: Score, keyHandler: KeyHandler) {
+  constructor(initialScore: Score, keyHandler: KeyHandler, actionHandler: ActionHandler = NOOP_ACTION_HANDLER) {
     this.keyHandler = keyHandler;
+    this.actionHandler = actionHandler;
     const restored = loadAutosave();
     this.history = new History(restored ?? initialScore);
     this.cursor = clampCursor(this.history.current, defaultCursor());
@@ -143,23 +159,23 @@ export class EditorStore {
     unrefTimer(this.autosaveTimer);
   }
 
-  /**
-   * Runs `stroke` through the KeyHandler against the current state, then:
-   * applies `history` undo/redo, executes `commands` in order through
-   * History, then applies cursor/selection/entry/message. Returns whether
-   * the key was handled (the caller should `preventDefault` when true).
-   */
-  applyKey = (stroke: KeyStroke): boolean => {
-    const state: EditorState = {
+  private currentState(): EditorState {
+    return {
       score: this.history.current,
       cursor: this.cursor,
       selection: this.selection,
       entry: this.entry,
       clipboard: this.clipboard,
     };
-    const result = this.keyHandler(state, stroke);
-    if (result === null) return false;
+  }
 
+  /**
+   * Applies a `KeyResult`: `history` undo/redo, then `commands` in order
+   * through History (grouped as one undo step), then cursor/selection/
+   * entry/message. Shared by `applyKey` and `applyAction` — both handlers
+   * return the same contract (src/input/types.ts).
+   */
+  private applyResult(result: KeyResult): void {
     if (result.history === "undo") this.history.undo();
     else if (result.history === "redo") this.history.redo();
     this.history.executeGroup(result.commands);
@@ -173,6 +189,29 @@ export class EditorStore {
     if (result.message !== undefined) this.message = result.message;
 
     this.emit();
+  }
+
+  /**
+   * Runs `stroke` through the KeyHandler against the current state and
+   * applies the result. Returns whether the key was handled (the caller
+   * should `preventDefault` when true).
+   */
+  applyKey = (stroke: KeyStroke): boolean => {
+    const result = this.keyHandler(this.currentState(), stroke);
+    if (result === null) return false;
+    this.applyResult(result);
+    return true;
+  };
+
+  /**
+   * Runs `action` through the ActionHandler (palettes, staves panel, mouse
+   * drags) against the current state and applies the result exactly like
+   * `applyKey`. Returns whether the action was handled.
+   */
+  applyAction = (action: PaletteAction): boolean => {
+    const result = this.actionHandler(this.currentState(), action);
+    if (result === null) return false;
+    this.applyResult(result);
     return true;
   };
 
@@ -220,6 +259,7 @@ export class EditorStore {
 
 export interface EditorStoreApi extends EditorSnapshot {
   applyKey: (stroke: KeyStroke) => boolean;
+  applyAction: (action: PaletteAction) => boolean;
   setCursor: (cursor: Cursor) => void;
   setSelection: (selection: Selection) => void;
   undo: () => void;
@@ -229,14 +269,19 @@ export interface EditorStoreApi extends EditorSnapshot {
 }
 
 /** One `EditorStore` for the lifetime of the component, wired into React via `useSyncExternalStore`. */
-export function useEditorStore(initialScore: Score, keyHandler: KeyHandler): EditorStoreApi {
-  const [store] = useState(() => new EditorStore(initialScore, keyHandler));
+export function useEditorStore(
+  initialScore: Score,
+  keyHandler: KeyHandler,
+  actionHandler: ActionHandler = NOOP_ACTION_HANDLER,
+): EditorStoreApi {
+  const [store] = useState(() => new EditorStore(initialScore, keyHandler, actionHandler));
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
 
   return useMemo(
     () => ({
       ...snapshot,
       applyKey: store.applyKey,
+      applyAction: store.applyAction,
       setCursor: store.setCursor,
       setSelection: store.setSelection,
       undo: store.undo,
