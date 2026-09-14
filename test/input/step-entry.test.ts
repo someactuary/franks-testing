@@ -732,3 +732,114 @@ describe("handleKey: Tab cycles all staves", () => {
     expect(h.cursor.staffIndex).toBe(0);
   });
 });
+
+describe("handleKey: duration digits and '.' on a selection (entry off) act on the selection", () => {
+  it('a duration digit with a non-empty selection and entry OFF applies setDuration instead of changing the pending duration', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("C4", 4);
+    voice.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    expect(h.entry.active).toBe(false);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    h.press({ key: "2" }); // half
+
+    expect(h.entry.base).toBe(4); // pending duration untouched
+    const items = h.voiceItems(0);
+    if (items[0]!.kind !== "note") throw new Error("expected a note");
+    expect(items[0]!.duration).toEqual({ base: 2, dots: 0 });
+  });
+
+  it('"." with a non-empty selection and entry OFF toggles the dot on the selection', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("C4", 4);
+    voice.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    h.press({ key: "." });
+
+    expect(h.entry.dots).toBe(0); // pending entry state untouched
+    const items = h.voiceItems(0);
+    if (items[0]!.kind !== "note") throw new Error("expected a note");
+    expect(items[0]!.duration).toEqual({ base: 4, dots: 1 });
+  });
+
+  it("a duration digit with entry ON still changes the pending duration, even with a selection", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.press({ key: "n" });
+    h.selection = { ids: ["something"] };
+
+    h.press({ key: "8" });
+
+    expect(h.entry.base).toBe(8);
+  });
+});
+
+describe("handleKey: slur / hairpin / tuplet shortcuts", () => {
+  it('"s" creates a slur between two selected notes', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id, d.notes[0]!.id] };
+
+    h.press({ key: "s" });
+
+    expect(h.history.current.spanners).toHaveLength(1);
+    expect(h.history.current.spanners[0]!.kind).toBe("slur");
+  });
+
+  it('"<" and ">" add cresc / dim hairpins', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    voice.items = [c, d, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [c.notes[0]!.id, d.notes[0]!.id] };
+
+    h.press({ key: "<" });
+    const sp = h.history.current.spanners[0]!;
+    expect(sp.kind).toBe("hairpin");
+    if (sp.kind === "hairpin") expect(sp.shape).toBe("cresc");
+
+    h.press({ key: ">" });
+    const sp2 = h.history.current.spanners[1]!;
+    if (sp2.kind === "hairpin") expect(sp2.shape).toBe("dim");
+  });
+
+  it("mod+3 makes a triplet (3:2) of the selected event", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("C4", 4);
+    voice.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    h.press({ key: "3", mod: true });
+
+    const group = h.voiceItems(0)[0]!;
+    expect(group.kind).toBe("tuplet");
+    if (group.kind === "tuplet") expect(group.ratio).toEqual({ actual: 3, normal: 2, unit: 8 });
+  });
+
+  it("mod+5 / mod+2 make 5:4 and 2:3 tuplets", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("C4", 4);
+    voice.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    h.press({ key: "5", mod: true });
+    const group = h.voiceItems(0)[0]!;
+    if (group.kind !== "tuplet") throw new Error("expected a tuplet");
+    expect(group.ratio.actual).toBe(5);
+    expect(group.ratio.normal).toBe(4);
+  });
+});

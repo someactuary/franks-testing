@@ -20,6 +20,7 @@ import {
   writeEvent,
 } from "@/commands/edit";
 import type { Command } from "@/commands/types";
+import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
 import {
   absoluteOffset,
@@ -63,6 +64,16 @@ const DURATION_DIGITS: Record<string, NoteValue> = { "1": 1, "2": 2, "4": 4, "8"
 
 /** mod+alt+1..4 -> voice index 0..3 (see docs/ARCHITECTURE.md's Voices M2 contract). */
 const VOICE_DIGITS: Record<string, number> = { "1": 0, "2": 1, "3": 2, "4": 3 };
+
+/** mod+digit -> a tuplet ratio, applied via the "tuplet" action. */
+const TUPLET_SHORTCUTS: Record<string, { actual: number; normal: number }> = {
+  "3": { actual: 3, normal: 2 },
+  "5": { actual: 5, normal: 4 },
+  "6": { actual: 6, normal: 4 },
+  "7": { actual: 7, normal: 4 },
+  "2": { actual: 2, normal: 3 },
+  "9": { actual: 9, normal: 8 },
+};
 
 /**
  * Among referenceOctave-1/+0/+1, the octave that puts `step` diatonically closest to
@@ -266,6 +277,25 @@ export const handleKey: KeyHandler = (state, key) => {
     return { commands: rests.map((r) => toggleRestInvisible(r.event.id)) };
   }
 
+  // mod+digit: wrap the tuplet action's ratio shortcuts (3:2, 5:4, 6:4, 7:4, 2:3, 9:8).
+  if (key.mod && !key.alt && key.key in TUPLET_SHORTCUTS) {
+    const { actual, normal } = TUPLET_SHORTCUTS[key.key]!;
+    return handleAction(state, { kind: "tuplet", actual, normal });
+  }
+
+  // "s": slur action.
+  if (!key.mod && lower === "s") {
+    return handleAction(state, { kind: "slur" });
+  }
+
+  // "<" / ">" (i.e. shift+"," / shift+"."): crescendo / diminuendo hairpin.
+  if (key.key === "<") {
+    return handleAction(state, { kind: "hairpin", shape: "cresc" });
+  }
+  if (key.key === ">") {
+    return handleAction(state, { kind: "hairpin", shape: "dim" });
+  }
+
   // Clipboard.
   if (key.mod && lower === "c") {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
@@ -329,6 +359,15 @@ export const handleKey: KeyHandler = (state, key) => {
   if (!key.mod && (key.key === "Backspace" || key.key === "Delete") && state.selection.ids.length > 0) {
     const erased = eraseSelected(state);
     return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+  }
+
+  // With entry OFF and something selected, duration digits / "." apply straight to the
+  // selection (setDuration/toggleDot) instead of changing the pending entry duration.
+  if (!entry.active && state.selection.ids.length > 0 && key.key in DURATION_DIGITS) {
+    return handleAction(state, { kind: "setDuration", base: DURATION_DIGITS[key.key]!, dots: entry.dots });
+  }
+  if (!entry.active && state.selection.ids.length > 0 && key.key === ".") {
+    return handleAction(state, { kind: "toggleDot" });
   }
 
   if (entry.active && key.key in DURATION_DIGITS) {
