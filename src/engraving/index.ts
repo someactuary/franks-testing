@@ -14,3 +14,5 @@ export interface EngraveOptions {
  * Implemented in ./engrave.ts (M0: single staff, single voice, one system per page row).
  */
 export type Engrave = (score: Score, opts: EngraveOptions) => LayoutResult;
+
+export { engrave } from "./engrave";
