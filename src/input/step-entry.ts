@@ -4,9 +4,23 @@
  * src/input/types.ts and are not modified here). The store (src/ui) applies the
  * returned commands through History, then adopts the returned cursor/selection/entry.
  */
-import { add, cmp, lt, newId, notated, notatedToFraction, ZERO, type NoteValue, type Score } from "@/model";
+import {
+  add,
+  cmp,
+  eq,
+  lt,
+  newId,
+  notated,
+  notatedToFraction,
+  ZERO,
+  type Fraction,
+  type Lyric,
+  type NoteEvent,
+  type NoteValue,
+  type Score,
+} from "@/model";
 import { keyAlter, STEPS, type Alter, type Pitch, type Step } from "@/model/pitch";
-import { locateNote } from "@/commands/locate";
+import { locateEvent, locateNote } from "@/commands/locate";
 import { addMeasures, removeMeasure, toggleTie } from "@/commands/basic";
 import {
   addNoteToEvent,
@@ -19,6 +33,7 @@ import {
   transposeNotes,
   writeEvent,
 } from "@/commands/edit";
+import { setLyric, setLyricExtend } from "@/commands/lyrics";
 import type { Command } from "@/commands/types";
 import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
@@ -37,11 +52,13 @@ import {
 } from "./navigation";
 import {
   DEFAULT_ENTRY_STATE,
+  type ClipboardContent,
   type Cursor,
   type EditorState,
   type EntryState,
   type KeyHandler,
   type KeyResult,
+  type KeyStroke,
   type Selection,
 } from "./types";
 
@@ -130,6 +147,13 @@ function selectionOf(pe: PositionedVoiceEvent | undefined): Selection {
   return { ids: idsForEvent(pe.event) };
 }
 
+/** The mod+c status message: "Copied N notes" only when every copied item is a note, else "Copied N events" (rests and notes mixed, or rests only). */
+function copiedMessage(clipboard: ClipboardContent): string {
+  const items = clipboard.staves.flatMap((s) => s.items);
+  const allNotes = items.every((i) => i.event.kind === "note");
+  return `Copied ${items.length} ${allNotes ? "notes" : "events"}`;
+}
+
 /**
  * Erases every event in the current selection (deduplicated by event id), earliest
  * first. Returns the commands plus the cursor position of the earliest erased event
@@ -156,8 +180,19 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
 
 /** Cursor + event-boundary navigation shared by ArrowLeft/ArrowRight. Crosses measures; stops at score ends. */
 function moveToEvent(state: EditorState, dir: 1 | -1): KeyResult {
-  const { score, cursor } = state;
+  const { score, cursor, selection } = state;
   if (dir === 1) {
+    // With nothing selected and the cursor sitting at the very start of a measure,
+    // ArrowRight selects that measure's FIRST event (the one the cursor is already
+    // touching) instead of skipping straight past it to the second.
+    if (selection.ids.length === 0 && eq(cursor.offset, ZERO)) {
+      const first = eventAtCursor(score, cursor);
+      if (first) {
+        const off = nextOffset(score, cursor);
+        const newCursor: Cursor = off !== null ? { ...cursor, offset: off } : cursor;
+        return { commands: [], cursor: newCursor, selection: selectionOf(first) };
+      }
+    }
     const off = nextOffset(score, cursor);
     if (off !== null) {
       const newCursor: Cursor = { ...cursor, offset: off };
@@ -233,9 +268,234 @@ function enter(state: EditorState, event: { kind: "note"; pitch: Pitch } | { kin
   return { commands, cursor: newCursor, selection: { ids: [selectedId] }, entry: newEntry };
 }
 
+/**
+ * Writes `pitch` as a note of the current entry duration at the cursor, advancing the
+ * cursor past it — the same write/advance code path a typed letter (a-g) uses. Exported
+ * for src/input/midi-entry.ts (docs/ARCHITECTURE.md's MIDI input contract: "same code
+ * path as a typed letter, cursor advances").
+ */
+export function enterPitch(state: EditorState, pitch: Pitch): KeyResult {
+  return enter(state, { kind: "note", pitch });
+}
+
+// ---------------------------------------------------------------------------
+// Lyric entry (M3): see docs/ARCHITECTURE.md's "Lyrics" contract. `EntryState.lyric`
+// (contract, src/input/types.ts) only stores `{eventId, verse}`; everything else
+// (the syllable text/syllabic, and neighboring-note lookups for hyphenation) is
+// re-derived from the score on every keystroke.
+// ---------------------------------------------------------------------------
+
+/** A NoteEvent located within a voice, with enough context to navigate to its neighbors and reconstruct a Cursor. */
+interface LyricNoteLocation {
+  event: NoteEvent;
+  partIndex: number;
+  measureIndex: number;
+  staffIndex: number;
+  voiceIndex: number;
+  offset: Fraction;
+}
+
+function toCursor(loc: LyricNoteLocation): Cursor {
+  return { partIndex: loc.partIndex, measureIndex: loc.measureIndex, staffIndex: loc.staffIndex, voiceIndex: loc.voiceIndex, offset: loc.offset };
+}
+
+/** The lyric at `verse` on `event`, if any. */
+function lyricAt(event: NoteEvent, verse: number): Lyric | undefined {
+  return event.lyrics?.find((l) => l.verse === verse);
+}
+
+/** Re-locates `eventId` as a `LyricNoteLocation`, or undefined if it no longer resolves to a NoteEvent. */
+function locateLyricEvent(score: Score, eventId: string): LyricNoteLocation | undefined {
+  const hit = locateEvent(score, eventId);
+  if (!hit || hit.event.kind !== "note") return undefined;
+  const voiceCursor: Cursor = { partIndex: hit.partIndex, measureIndex: hit.measureIndex, staffIndex: hit.staffIndex, voiceIndex: hit.voiceIndex, offset: ZERO };
+  const positioned = eventsInVoice(score, voiceCursor).find((pe) => pe.event.id === eventId);
+  if (!positioned) return undefined;
+  return { event: hit.event, partIndex: hit.partIndex, measureIndex: hit.measureIndex, staffIndex: hit.staffIndex, voiceIndex: hit.voiceIndex, offset: positioned.offset };
+}
+
+/**
+ * The next (`dir` 1) or previous (`dir` -1) NoteEvent in the same voice as `from`,
+ * skipping rests and crossing barlines (same traversal `moveToEvent` uses). undefined
+ * at the score's start/end.
+ */
+function adjacentNoteEvent(score: Score, from: LyricNoteLocation, dir: 1 | -1): LyricNoteLocation | undefined {
+  const measureCount = score.parts[from.partIndex]?.measures.length ?? 0;
+  let cur: Cursor = toCursor(from);
+  for (;;) {
+    if (dir === 1) {
+      const off = nextOffset(score, cur);
+      if (off !== null) {
+        cur = { ...cur, offset: off };
+      } else if (cur.measureIndex + 1 < measureCount) {
+        cur = { ...cur, measureIndex: cur.measureIndex + 1, offset: ZERO };
+      } else {
+        return undefined;
+      }
+    } else {
+      const off = prevOffset(score, cur);
+      if (off !== null) {
+        cur = { ...cur, offset: off };
+      } else if (cur.measureIndex > 0) {
+        const prevMeasureIndex = cur.measureIndex - 1;
+        const events = eventsInVoice(score, { ...cur, measureIndex: prevMeasureIndex });
+        const lastOffset = events.length > 0 ? events[events.length - 1]!.offset : ZERO;
+        cur = { ...cur, measureIndex: prevMeasureIndex, offset: lastOffset };
+      } else {
+        return undefined;
+      }
+    }
+    const pe = eventAtCursor(score, cur);
+    if (pe && pe.event.kind === "note") {
+      return { event: pe.event, partIndex: cur.partIndex, measureIndex: cur.measureIndex, staffIndex: cur.staffIndex, voiceIndex: cur.voiceIndex, offset: cur.offset };
+    }
+  }
+}
+
+/** True if the note immediately before `loc` in its voice has a "begin"/"middle" syllabic at `verse` (i.e. we're continuing a hyphenated word). */
+function chainedFromPrevious(score: Score, loc: LyricNoteLocation, verse: number): boolean {
+  const prev = adjacentNoteEvent(score, loc, -1);
+  const syllabic = prev ? lyricAt(prev.event, verse)?.syllabic : undefined;
+  return syllabic === "begin" || syllabic === "middle";
+}
+
+/** The NoteEvent to enter lyric mode on: the selection (if it resolves to a note), else the event before the cursor. */
+function lyricEntryTarget(state: EditorState): LyricNoteLocation | undefined {
+  const resolved = resolveSelection(state.score, state.selection).find((r) => r.event.kind === "note");
+  if (resolved) {
+    return {
+      event: resolved.event as NoteEvent,
+      partIndex: resolved.partIndex,
+      measureIndex: resolved.measureIndex,
+      staffIndex: resolved.staffIndex,
+      voiceIndex: resolved.voiceIndex,
+      offset: resolved.offset,
+    };
+  }
+  const before = eventBeforeCursor(state.score, state.cursor);
+  if (before && before.event.kind === "note") {
+    const { partIndex, measureIndex, staffIndex, voiceIndex } = state.cursor;
+    return { event: before.event, partIndex, measureIndex, staffIndex, voiceIndex, offset: before.offset };
+  }
+  return undefined;
+}
+
+function enterLyricMode(state: EditorState, target: LyricNoteLocation, verse: number): KeyResult {
+  return {
+    commands: [],
+    cursor: toCursor(target),
+    selection: { ids: idsForEvent(target.event) },
+    entry: { ...state.entry, lyric: { eventId: target.event.id, verse } },
+  };
+}
+
+/** Space / "-" / "_": advance lyric mode to the next NoteEvent in the voice (staying put at the score's end), running `commands` first. */
+function lyricAdvance(state: EditorState, from: LyricNoteLocation, verse: number, commands: Command[]): KeyResult {
+  const next = adjacentNoteEvent(state.score, from, 1) ?? from;
+  return {
+    commands,
+    cursor: toCursor(next),
+    selection: { ids: idsForEvent(next.event) },
+    entry: { ...state.entry, lyric: { eventId: next.event.id, verse } },
+  };
+}
+
+const LYRIC_SPECIAL_KEYS = new Set([" ", "-", "_"]);
+
+/** A single character that should append to the lyric being typed: not a shortcut (no mod), not one of the specially-handled keys. Deliberately not gated on `alt` so Mac accented-letter composition (which reports the composed character with `altKey` still set) keeps working. */
+function isPrintableLyricChar(key: KeyStroke): boolean {
+  return !key.mod && key.key.length === 1 && !LYRIC_SPECIAL_KEYS.has(key.key);
+}
+
+/** `setLyric` args carrying over an existing lyric's `extend`, if any (setLyric would otherwise drop it back to unset). */
+function withCarriedExtend(text: string, syllabic: Lyric["syllabic"], existing: Lyric | undefined): Partial<Lyric> & { text: string } {
+  return existing?.extend !== undefined ? { text, syllabic, extend: existing.extend } : { text, syllabic };
+}
+
+/**
+ * Handles a keystroke while `entry.lyric` is set (docs/ARCHITECTURE.md's Lyrics M3
+ * entry contract). Every documented key is handled here; anything else returns null
+ * so it can never fall through into note entry or another shortcut.
+ */
+function handleLyricKey(state: EditorState, key: KeyStroke): KeyResult | null {
+  const { score, entry } = state;
+  const lyricState = entry.lyric!;
+  const loc = locateLyricEvent(score, lyricState.eventId);
+  if (!loc) return { commands: [], entry: { ...entry, lyric: null } }; // the event vanished; bail out of lyric mode
+
+  const verse = lyricState.verse;
+
+  if (key.key === "Enter" || key.key === "Escape") {
+    return { commands: [], entry: { ...entry, lyric: null } }; // Escape keeps whatever text was already committed
+  }
+  if (key.key === "ArrowLeft" || key.key === "ArrowRight") {
+    const adj = adjacentNoteEvent(score, loc, key.key === "ArrowRight" ? 1 : -1);
+    if (!adj) return { commands: [], selection: { ids: idsForEvent(loc.event) } }; // at the score's start/end: stays
+    return {
+      commands: [],
+      cursor: toCursor(adj),
+      selection: { ids: idsForEvent(adj.event) },
+      entry: { ...entry, lyric: { eventId: adj.event.id, verse } },
+    };
+  }
+  if (key.key === " ") {
+    return lyricAdvance(state, loc, verse, []);
+  }
+  if (key.key === "-") {
+    const existing = lyricAt(loc.event, verse);
+    if (!existing || existing.text.length === 0) return lyricAdvance(state, loc, verse, []); // nothing typed yet: just move on
+    const syllabic: Lyric["syllabic"] = chainedFromPrevious(score, loc, verse) ? "middle" : "begin";
+    const cmd = setLyric(loc.event.id, verse, withCarriedExtend(existing.text, syllabic, existing));
+    return lyricAdvance(state, loc, verse, [cmd]);
+  }
+  if (key.key === "_") {
+    const existing = lyricAt(loc.event, verse);
+    if (!existing || existing.text.length === 0) return lyricAdvance(state, loc, verse, []); // nothing to extend
+    return lyricAdvance(state, loc, verse, [setLyricExtend(loc.event.id, verse, true)]);
+  }
+  if (key.key === "Backspace") {
+    const existing = lyricAt(loc.event, verse);
+    if (!existing || existing.text.length === 0) return { commands: [] };
+    const text = existing.text.slice(0, -1);
+    return { commands: [setLyric(loc.event.id, verse, withCarriedExtend(text, existing.syllabic, existing))] };
+  }
+  if (isPrintableLyricChar(key)) {
+    const existing = lyricAt(loc.event, verse);
+    const syllabic: Lyric["syllabic"] = existing?.syllabic ?? (chainedFromPrevious(score, loc, verse) ? "end" : "single");
+    const text = (existing?.text ?? "") + key.key;
+    return { commands: [setLyric(loc.event.id, verse, withCarriedExtend(text, syllabic, existing))] };
+  }
+  return null;
+}
+
 export const handleKey: KeyHandler = (state, key) => {
   const { score, cursor, entry } = state;
   const lower = key.key.length === 1 ? key.key.toLowerCase() : key.key;
+
+  // ⌘L / ⌘⇧L: enter lyric mode (or, already in it, retarget to the current selection /
+  // move to the next verse). Checked first, unconditionally, since mod+L is always a
+  // shortcut, never literal text — unlike bare "L" below, which only enters lyric mode
+  // when we're not already in it.
+  if (key.mod && lower === "l") {
+    const target = lyricEntryTarget(state);
+    if (!target) return null;
+    const verse = key.shift ? (entry.lyric?.verse ?? 0) + 1 : (entry.lyric?.verse ?? 0);
+    return enterLyricMode(state, target, verse);
+  }
+
+  // In lyric mode, every other key is handled (or explicitly swallowed) here so
+  // nothing falls through into note entry or another shortcut.
+  if (entry.lyric) {
+    return handleLyricKey(state, key);
+  }
+
+  // "l"/"L" (no mod): enter lyric mode on the selected NoteEvent (or the event before
+  // the cursor), verse 0 (docs/ARCHITECTURE.md's Lyrics M3 entry contract).
+  if (lower === "l") {
+    const target = lyricEntryTarget(state);
+    if (!target) return null;
+    return enterLyricMode(state, target, 0);
+  }
 
   // Undo / redo
   if (key.mod && lower === "z") {
@@ -301,7 +561,7 @@ export const handleKey: KeyHandler = (state, key) => {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
     const clipboard = copySelection(state);
     if (!clipboard) return { commands: [], message: "Cannot copy tuplets yet" };
-    return { commands: [], clipboard, message: `Copied ${state.selection.ids.length} notes` };
+    return { commands: [], clipboard, message: copiedMessage(clipboard) };
   }
   if (key.mod && lower === "x") {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
@@ -327,8 +587,12 @@ export const handleKey: KeyHandler = (state, key) => {
     if (part) {
       for (let staffIndex = 0; staffIndex < part.staves.length; staffIndex++) {
         for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
-          const voiceCursor: Cursor = { partIndex: cursor.partIndex, measureIndex, staffIndex, voiceIndex: 0, offset: ZERO };
-          for (const pe of eventsInVoice(score, voiceCursor)) ids.push(...idsForEvent(pe.event));
+          const sm = part.measures[measureIndex]?.staves[staffIndex];
+          if (!sm) continue;
+          for (const voice of sm.voices) {
+            const voiceCursor: Cursor = { partIndex: cursor.partIndex, measureIndex, staffIndex, voiceIndex: voice.index, offset: ZERO };
+            for (const pe of eventsInVoice(score, voiceCursor)) ids.push(...idsForEvent(pe.event));
+          }
         }
       }
     }

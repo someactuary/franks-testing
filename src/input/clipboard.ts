@@ -98,7 +98,10 @@ function advanceCursor(score: Score, start: Cursor, distance: Fraction): Cursor 
  * staff (target staff = `cursor.staffIndex + staffOffset`; staves that don't exist are
  * skipped, reported in `message`). Each staff's contiguous [0, length) span is rebuilt
  * with the copied events at their offsets and rests filling the gaps, then every event
- * and note id is regenerated (tieStart flags are kept exactly as copied).
+ * and note id is regenerated (tieStart flags are kept exactly as copied). On success
+ * (no staff skipped), `message` reports how many notes were pasted (the count of
+ * originally-copied items, not counting the gap-filling rests paste adds); a skipped
+ * staff is reported instead, taking priority over the count.
  */
 export function pasteAt(state: EditorState): { commands: Command[]; cursorAfter: Cursor; message?: string } {
   const { score, cursor, clipboard } = state;
@@ -107,6 +110,7 @@ export function pasteAt(state: EditorState): { commands: Command[]; cursorAfter:
   const part = score.parts[cursor.partIndex];
   const commands: Command[] = [];
   let skippedAny = false;
+  let pastedCount = 0;
 
   for (const staff of clipboard.staves) {
     const targetStaffIndex = cursor.staffIndex + staff.staffOffset;
@@ -128,10 +132,12 @@ export function pasteAt(state: EditorState): { commands: Command[]; cursorAfter:
     const regenerated = sequence.map(regenerateIds);
     const targetCursor: Cursor = { ...cursor, staffIndex: targetStaffIndex, voiceIndex: 0 };
     commands.push(writeSequence(targetCursor, regenerated));
+    pastedCount += staff.items.length;
   }
 
   const cursorAfter = advanceCursor(score, cursor, clipboard.length);
-  return skippedAny
-    ? { commands, cursorAfter, message: "Pasted, but a staff was out of range and was skipped" }
-    : { commands, cursorAfter };
+  if (skippedAny) {
+    return { commands, cursorAfter, message: "Pasted, but a staff was out of range and was skipped" };
+  }
+  return { commands, cursorAfter, message: `Pasted ${pastedCount} notes` };
 }
