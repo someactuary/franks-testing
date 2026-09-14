@@ -307,3 +307,8 @@ score canvas is custom SVG either way).
   - Agent process: Sonnet renderer agent stalled once with nothing written; a
     nudge to "stop exploring, write files in this order" fixed it. Include that
     ordering in Tier 2 prompts from the start.
+- 2026-09-13 (M1 start): contracts added (MeasureLayout.columns, src/input/types.ts
+  editor state + KeyHandler, note-entry semantics in ARCHITECTURE.md). Fanned out:
+  Opus engraving (key sig per system, ties, tied-note accidentals), Sonnet commands +
+  pure step-entry key handler, Sonnet editor UI (store, cursor, selection, open/save,
+  autosave, undo/redo).
