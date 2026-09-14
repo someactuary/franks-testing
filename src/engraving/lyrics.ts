@@ -65,8 +65,12 @@ export const LYRICS = {
   descentRatio: 0.25,
   /** Gap between a syllable and the hyphen (or extender) beside it. */
   gapSp: 0.35,
-  /** Hyphens repeat at least this often over a long gap. */
-  hyphenPitchSp: 6.0,
+  /**
+   * Hyphens repeat at least this often over a long gap. Published vocal scores only
+   * repeat a hyphen over a genuinely long gap; a smaller pitch put two hyphens round
+   * an ordinary barline ("bless - | - ings").
+   */
+  hyphenPitchSp: 12.0,
   /** Extender line. */
   extenderThicknessSp: 0.12,
   extenderMinSp: 0.6,
