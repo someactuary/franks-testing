@@ -8,6 +8,7 @@ import { ties } from "./ties";
 import { voices } from "./voices";
 import { tuplets } from "./tuplets";
 import { satb } from "./satb";
+import { expressive } from "./expressive";
 import type { Score } from "@/model";
 
 export const FIXTURES: Record<string, () => Score> = {
@@ -21,4 +22,5 @@ export const FIXTURES: Record<string, () => Score> = {
   voices,
   tuplets,
   satb,
+  expressive,
 };
