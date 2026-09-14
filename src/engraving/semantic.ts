@@ -187,10 +187,18 @@ export class AccidentalMemory {
   }
 }
 
-function accidentalDecision(note: Note, memory: AccidentalMemory): { show: boolean; parens: boolean } {
+function accidentalDecision(
+  note: Note,
+  memory: AccidentalMemory,
+  tiedFrom: boolean,
+): { show: boolean; parens: boolean } {
+  const mode = note.accidental ?? "auto";
+  // A note tied from an earlier note inherits that note's accidental, so it never
+  // gets one of its own. The memory is deliberately left untouched: a later,
+  // untied repeat of the same pitch in this measure still needs its accidental.
+  if (tiedFrom && mode === "auto") return { show: false, parens: false };
   const d = diatonic(note.pitch);
   const differs = note.pitch.alter !== memory.effective(d, note.pitch.step);
-  const mode = note.accidental ?? "auto";
   memory.set(d, note.pitch.alter);
   switch (mode) {
     case "none":
@@ -219,6 +227,8 @@ export interface StaffMeasureInput {
   /** Notated length of the measure (respects `actualLength` pickups). */
   measureLength: Fraction;
   voices: Voice[];
+  /** Ids of notes that are the *end* of a tie; they never take an automatic accidental. */
+  tiedFrom?: ReadonlySet<Id>;
 }
 
 /** A positioned event plus the staff steps of its notes — the input to beam grouping. */
@@ -263,12 +273,14 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
   }
 
   const memory = new AccidentalMemory(key);
+  const tiedFrom = input.tiedFrom ?? EMPTY_IDS;
   const events: EventLayout[] = raw.map((r, i) => {
     const layout = layoutEvent({
       font,
       defaults,
       clef,
       memory,
+      tiedFrom,
       partIndex: input.partIndex,
       staffIndex: input.staffIndex,
       voiceIndex: r.voiceIndex,
@@ -287,11 +299,14 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
   return { partIndex: input.partIndex, staffIndex: input.staffIndex, clef, events, beams };
 }
 
+const EMPTY_IDS: ReadonlySet<Id> = new Set<Id>();
+
 interface EventInput {
   font: SmuflFontData;
   defaults: EngravingDefaults;
   clef: ClefKind;
   memory: AccidentalMemory;
+  tiedFrom: ReadonlySet<Id>;
   partIndex: number;
   staffIndex: number;
   voiceIndex: number;
@@ -392,7 +407,7 @@ function layoutNoteEvent(input: EventInput): EventLayout {
     displaced: displaced[i] === true,
   }));
 
-  assignAccidentals(notes, input.memory, font);
+  assignAccidentals(notes, input.memory, input.tiedFrom, font);
 
   // Augmentation dots: one per notehead, all aligned to the right of the chord.
   const dotBox = glyphBox(font, "augmentationDot");
@@ -524,12 +539,17 @@ interface PendingAccidental {
   bottom: number;
 }
 
-function assignAccidentals(notes: NoteLayout[], memory: AccidentalMemory, font: SmuflFontData): void {
+function assignAccidentals(
+  notes: NoteLayout[],
+  memory: AccidentalMemory,
+  tiedFrom: ReadonlySet<Id>,
+  font: SmuflFontData,
+): void {
   const pending: PendingAccidental[] = [];
   // Decide top-down: a chord is read from the top note downwards.
   for (let i = notes.length - 1; i >= 0; i--) {
     const n = notes[i]!;
-    const decision = accidentalDecision(n.note, memory);
+    const decision = accidentalDecision(n.note, memory, tiedFrom.has(n.note.id));
     if (!decision.show) continue;
     const core = accidentalGlyph(n.note.pitch.alter);
     const glyphs = decision.parens ? ["accidentalParensLeft", core, "accidentalParensRight"] : [core];

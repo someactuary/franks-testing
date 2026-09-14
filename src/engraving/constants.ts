@@ -22,6 +22,8 @@ export const ENGRAVING = {
   clefGapSp: 0.9,
   /** Gap between successive key-signature accidentals. */
   keyAccidentalGapSp: 0.12,
+  /** Gap between the cancellation naturals and the incoming key signature. */
+  keyCancelGapSp: 0.35,
   /** Gap after the key signature. */
   keyGapSp: 0.9,
   /** Gap after the time signature. */
@@ -52,6 +54,25 @@ export const ENGRAVING = {
   maxBeamSlopeSp: 1.0,
   /** Length of a fractional (partial) beam. */
   partialBeamSp: 1.0,
+
+  // --- ties ---------------------------------------------------------------
+  /** Horizontal gap between a notehead's edge and the tie endpoint. */
+  tieGapSp: 0.22,
+  /** Vertical offset of the tie endpoints from the notehead centre, towards the tie side. */
+  tieEndOffsetSp: 0.5,
+  /** Control-point height of a tie as a fraction of its horizontal length. */
+  tieHeightRatio: 0.16,
+  /** Floor and ceiling for the tie control-point height. */
+  tieMinHeightSp: 0.5,
+  tieMaxHeightSp: 1.2,
+  /** Horizontal inset of the tie control points, as a fraction of its length. */
+  tieShoulderRatio: 0.28,
+  /** A tie shorter than this is not worth drawing. */
+  tieMinLengthSp: 0.2,
+  /** Gap between the start of a broken tie's second piece and the end of the system prefix. */
+  tieAfterPrefixSp: 0.3,
+  /** Extra lead in a system-starting measure whose first onset receives a tie from the previous system. */
+  tieContinuationLeadSp: 1.6,
 
   // --- vertical / page ----------------------------------------------------
   /** Horizontal gap between the brace and the system's left edge. */

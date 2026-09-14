@@ -14,7 +14,7 @@ import type { BarlineStyle, ClefKind, Part, Score, StaffMeasure } from "@/model/
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
 import { planSystems, type SystemPlan } from "./breaking";
 import { ENGRAVING } from "./constants";
-import { glyphBox, STAFF_HEIGHT } from "./geometry";
+import { glyphBox, pathBounds, STAFF_HEIGHT } from "./geometry";
 import type {
   LayoutResult,
   MeasureLayout,
@@ -27,6 +27,7 @@ import type {
 import {
   beamGeometry,
   layoutStaffMeasure,
+  stemDirectionForSteps,
   type EventLayout,
   type StaffMeasureLayout,
 } from "./semantic";
@@ -38,6 +39,14 @@ import {
   type MeasureSpacing,
   type SpacingColumn,
 } from "./spacing";
+import {
+  needsTieContinuationLead,
+  resolveTies,
+  tiePath,
+  tieSide,
+  type TieEndpoint,
+  type TiePair,
+} from "./ties";
 import { pageMetrics, paginate, staffSlots, staffSpan, type StaffSlot } from "./vertical";
 
 export interface EngraveOptionsInput {
@@ -81,9 +90,15 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   let timeSig: TimeSignature = { numerator: 4, denominator: 4 };
   let measureNumber = 1;
 
+  // Tie pairing is a model-only question, so it runs before the semantic pass and
+  // seeds the accidental logic with the notes a tie ends on.
+  const ties = resolveTies(score);
+
   const prepared: PreparedMeasure[] = [];
   for (const [mi, attrs] of score.measures.entries()) {
+    const prevKey = key;
     if (attrs.keySig) key = attrs.keySig;
+    const keyChanged = attrs.keySig !== undefined && attrs.keySig.fifths !== prevKey.fifths;
     if (attrs.timeSig) timeSig = attrs.timeSig;
     if (attrs.numberOverride !== undefined) measureNumber = attrs.numberOverride;
     const measureLen: Fraction = attrs.actualLength ?? timeSigLength(timeSig);
@@ -108,15 +123,22 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
         timeSig,
         measureLength: measureLen,
         voices: sm?.voices ?? [],
+        tiedFrom: ties.targets,
       });
     });
 
-    // Key and time signatures are drawn where they are declared; clefs are drawn
-    // at every system start as well.
-    const keySpec = attrs.keySig ? { key: attrs.keySig } : {};
+    // The clef and the key signature in force are repeated at every system start;
+    // mid-system they appear only where they change, the key with the naturals
+    // that cancel the outgoing one. The time signature is drawn only where declared.
     const timeSpec = attrs.timeSig ? { timeSig: attrs.timeSig } : {};
-    const mkPrefix = (showClef: boolean): MeasurePrefix =>
-      layoutPrefix(font, slots, { showClef, clefs: flatClefs, ...keySpec, ...timeSpec });
+    const mkPrefix = (systemStart: boolean): MeasurePrefix =>
+      layoutPrefix(font, slots, {
+        showClef: systemStart,
+        clefs: flatClefs,
+        ...(systemStart || keyChanged ? { key } : {}),
+        ...(keyChanged ? { cancelKey: prevKey } : {}),
+        ...timeSpec,
+      });
 
     const barline: BarlineStyle = attrs.barline ?? "regular";
     const common = { measureIndex: mi, measureId: attrs.id, staves, barline, defaults };
@@ -128,7 +150,12 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
       ...(attrs.startBarline ? { startBarline: attrs.startBarline } : {}),
       staves,
       mid: buildMeasureSpacing({ ...common, prefix: mkPrefix(false) }),
-      start: buildMeasureSpacing({ ...common, prefix: mkPrefix(true) }),
+      start: buildMeasureSpacing({
+        ...common,
+        prefix: mkPrefix(true),
+        // Room for the second piece of a tie broken across the system break.
+        extraLead: needsTieContinuationLead(ties.pairs, mi) ? ENGRAVING.tieContinuationLeadSp : 0,
+      }),
     });
     measureNumber++;
   }
@@ -150,6 +177,8 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   interface BuiltSystem {
     plan: SystemPlan;
     width: number;
+    /** Justified spacing of each measure of this system, parallel to `plan.measures`. */
+    spacings: MeasureSpacing[];
     primitives: Primitive[];
     measures: MeasureLayout[];
     above: number;
@@ -183,14 +212,31 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
       });
     }
 
-    const ext = verticalExtent(primitives, font, span);
-    return { plan, width, primitives, measures: spacings.map((m) => ({
-      measureIndex: m.measureIndex,
-      x: m.x,
-      width: m.width,
-      columns: m.columns.map((c) => ({ offset: c.offset, x: m.x + c.x })),
-    })), above: ext.above, below: ext.below };
+    return {
+      plan,
+      width,
+      spacings,
+      primitives,
+      measures: spacings.map((m) => ({
+        measureIndex: m.measureIndex,
+        x: m.x,
+        width: m.width,
+        columns: m.columns.map((c) => ({ offset: c.offset, x: m.x + c.x })),
+      })),
+      above: 0,
+      below: 0,
+    };
   });
+
+  // Ties can span systems, so they are drawn once every system's x positions are
+  // final — and before the vertical extents, which must cover their arcs.
+  emitTies(built, { defaults, slots, ties: ties.pairs });
+
+  for (const b of built) {
+    const ext = verticalExtent(b.primitives, font, span);
+    b.above = ext.above;
+    b.below = ext.below;
+  }
 
   // --- 4. pagination -------------------------------------------------------
   const hasTitleBlock = Boolean(score.meta.title ?? score.meta.subtitle ?? score.meta.composer);
@@ -605,6 +651,120 @@ function emitBarlines(out: Primitive[], input: BarlineEmitInput): void {
 }
 
 // ---------------------------------------------------------------------------
+// Ties
+// ---------------------------------------------------------------------------
+
+interface TieSystem {
+  plan: SystemPlan;
+  width: number;
+  spacings: MeasureSpacing[];
+  primitives: Primitive[];
+}
+
+interface TieSite {
+  systemIndex: number;
+  staffY: number;
+  ev: EventLayout;
+  noteIndex: number;
+  /** System-coordinate x of the event's column origin. */
+  columnX: number;
+}
+
+/**
+ * Draw every resolved tie. A tie that crosses a system break becomes two pieces:
+ * one running from the start notehead to the right edge of its system, one from
+ * just after the next system's prefix to the end notehead. A tie whose partner
+ * could not be laid out (a missing measure, an event filtered out) draws nothing.
+ */
+function emitTies(
+  systems: TieSystem[],
+  input: { defaults: EngravingDefaults; slots: StaffSlot[]; ties: TiePair[] },
+): void {
+  if (input.ties.length === 0) return;
+
+  const located = new Map<number, { systemIndex: number; spacing: MeasureSpacing }>();
+  for (const [si, sys] of systems.entries()) {
+    for (const [i, mi] of sys.plan.measures.entries()) {
+      const spacing = sys.spacings[i];
+      if (spacing) located.set(mi, { systemIndex: si, spacing });
+    }
+  }
+
+  const site = (ep: TieEndpoint): TieSite | undefined => {
+    const loc = located.get(ep.measureIndex);
+    if (!loc) return undefined;
+    const slotIndex = input.slots.findIndex(
+      (s) => s.partIndex === ep.partIndex && s.staffIndex === ep.staffIndex,
+    );
+    const slot = input.slots[slotIndex];
+    const staff = slotIndex < 0 ? undefined : loc.spacing.staves[slotIndex];
+    if (!slot || !staff) return undefined;
+    const ev = staff.events.find((e) => e.event.id === ep.eventId);
+    if (!ev) return undefined;
+    const noteIndex = ev.notes.findIndex((n) => n.note.id === ep.noteId);
+    if (noteIndex < 0) return undefined;
+    const key = fracToString(ev.offset);
+    const column = loc.spacing.columns.find((c) => fracToString(c.offset) === key);
+    return {
+      systemIndex: loc.systemIndex,
+      staffY: slot.y,
+      ev,
+      noteIndex,
+      columnX: loc.spacing.x + (column?.x ?? 0),
+    };
+  };
+
+  const piece = (
+    sys: TieSystem,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    side: "up" | "down",
+    ref: Ref,
+  ): void => {
+    if (x2 - x1 < ENGRAVING.tieMinLengthSp) return;
+    sys.primitives.push({
+      type: "path",
+      d: tiePath(x1, y1, x2, y2, side, input.defaults),
+      fill: true,
+      ref,
+    });
+  };
+
+  for (const pair of input.ties) {
+    const from = site(pair.start);
+    const to = site(pair.end);
+    if (!from || !to) continue;
+
+    const startNote = from.ev.notes[from.noteIndex]!;
+    const endNote = to.ev.notes[to.noteIndex]!;
+    // A whole note has no stem; use the direction it would have had.
+    const stem = from.ev.stem?.dir ?? stemDirectionForSteps([startNote.step]);
+    const side = tieSide(from.noteIndex, from.ev.notes.length, stem);
+    const dy = side === "up" ? -ENGRAVING.tieEndOffsetSp : ENGRAVING.tieEndOffsetSp;
+
+    const x1 = from.columnX + startNote.x + startNote.width + ENGRAVING.tieGapSp;
+    const y1 = from.staffY + startNote.y + dy;
+    const x2 = to.columnX + endNote.x - ENGRAVING.tieGapSp;
+    const y2 = to.staffY + endNote.y + dy;
+    const ref: Ref = { id: startNote.note.id, role: "tie" };
+
+    const startSystem = systems[from.systemIndex]!;
+    if (from.systemIndex === to.systemIndex) {
+      piece(startSystem, x1, y1, x2, y2, side, ref);
+      continue;
+    }
+
+    const endSystem = systems[to.systemIndex]!;
+    piece(startSystem, x1, y1, startSystem.width, y1, side, ref);
+    const first = endSystem.spacings[0];
+    const resume = (first ? first.x + first.prefix.width : 0) + ENGRAVING.tieAfterPrefixSp;
+    piece(endSystem, resume, y2, x2, y2, side, ref);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Vertical extent of a system's ink
 // ---------------------------------------------------------------------------
 
@@ -639,6 +799,15 @@ function verticalExtent(
         see(p.y - p.size);
         see(p.y);
         break;
+      case "path": {
+        // Ties and slurs: the control-point hull bounds the curve.
+        const b = pathBounds(p.d);
+        if (b) {
+          see(b.minY);
+          see(b.maxY);
+        }
+        break;
+      }
       case "staffLines":
         see(p.y);
         see(p.y + p.lineCount - 1);

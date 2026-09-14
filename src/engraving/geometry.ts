@@ -119,6 +119,9 @@ function clefFamily(clef: ClefKind): ClefFamily {
  * in the conventional octave placement for each clef. Tenor clef uses the usual
  * exception that keeps the first sharp inside the staff.
  */
+const SHARP_ORDER: readonly Step[] = ["F", "C", "G", "D", "A", "E", "B"];
+const FLAT_ORDER: readonly Step[] = ["B", "E", "A", "D", "G", "C", "F"];
+
 const SHARP_STEPS: Record<ClefFamily, readonly number[]> = {
   treble: [4, 1, 5, 2, -1, 3, 0],
   bass: [2, -1, 3, 0, -3, 1, -2],
@@ -145,9 +148,7 @@ export function keySignatureLayout(key: KeySignature, clef: ClefKind): KeySigAcc
   const fam = clefFamily(clef);
   const sharps = key.fifths > 0;
   const count = Math.min(7, Math.abs(key.fifths));
-  const order: readonly Step[] = sharps
-    ? ["F", "C", "G", "D", "A", "E", "B"]
-    : ["B", "E", "A", "D", "G", "C", "F"];
+  const order: readonly Step[] = sharps ? SHARP_ORDER : FLAT_ORDER;
   const steps = sharps ? SHARP_STEPS[fam] : FLAT_STEPS[fam];
   const out: KeySigAccidental[] = [];
   for (let i = 0; i < count; i++) {
@@ -157,6 +158,40 @@ export function keySignatureLayout(key: KeySignature, clef: ClefKind): KeySigAcc
       staffStep: steps[i]!,
       glyph: sharps ? "accidentalSharp" : "accidentalFlat",
     });
+  }
+  return out;
+}
+
+/**
+ * The naturals that cancel `prev` when the key changes to `next`, in drawing
+ * order. Standard practice: a move to C major, a move to the other side of the
+ * circle, or a move to *fewer* accidentals of the same kind cancels the
+ * accidentals that are no longer in force; a move to more of the same kind
+ * cancels nothing.
+ */
+export function keyCancellationLayout(
+  prev: KeySignature,
+  next: KeySignature,
+  clef: ClefKind,
+): KeySigAccidental[] {
+  const prevCount = Math.min(7, Math.abs(prev.fifths));
+  if (prevCount === 0) return [];
+  const prevSharps = prev.fifths > 0;
+  const nextCount = Math.min(7, Math.abs(next.fifths));
+  const nextSharps = next.fifths > 0;
+
+  let from = 0;
+  if (nextCount > 0 && nextSharps === prevSharps) {
+    if (nextCount >= prevCount) return [];
+    from = nextCount;
+  }
+
+  const fam = clefFamily(clef);
+  const order = prevSharps ? SHARP_ORDER : FLAT_ORDER;
+  const steps = prevSharps ? SHARP_STEPS[fam] : FLAT_STEPS[fam];
+  const out: KeySigAccidental[] = [];
+  for (let i = from; i < prevCount; i++) {
+    out.push({ step: order[i]!, alter: 0, staffStep: steps[i]!, glyph: "accidentalNatural" });
   }
   return out;
 }
@@ -275,4 +310,39 @@ export function timeSigDigitGlyphs(n: number): string[] {
   return String(Math.abs(Math.trunc(n)))
     .split("")
     .map((d) => `timeSig${d}`);
+}
+
+// ---------------------------------------------------------------------------
+// Path bounds
+// ---------------------------------------------------------------------------
+
+export interface PathBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Conservative bounding box of an SVG path made only of absolute `M`, `L`, `C`
+ * and `Z` commands — every number in such a path is one half of a coordinate
+ * pair, so the hull of the points (control points included) bounds the curve.
+ * Returns undefined when the path carries no coordinates.
+ */
+export function pathBounds(d: string): PathBounds | undefined {
+  const nums = d.match(/-?\d+(?:\.\d+)?(?:e[-+]?\d+)?/gi);
+  if (!nums || nums.length < 2) return undefined;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = Number(nums[i]);
+    const y = Number(nums[i + 1]);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
 }
