@@ -20,7 +20,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: "Pitches and rests (entry on)",
     rows: [
       ["A … G", "Enter pitch (nearest octave, key signature applied), cursor advances"],
-      ["Shift+A … G", "Add pitch to the chord just entered"],
+      ["Shift+A … G", "Add pitch above the top note of the chord just entered"],
       ["0", "Rest of the current duration"],
       ["+ / -", "Next note sharp / flat (or alter selected notes)"],
       ["T", "Toggle tie on last entered / selected note"],

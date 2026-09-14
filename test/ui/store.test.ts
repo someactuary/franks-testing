@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EditorStore } from "@/ui/store";
 import { stubKeyHandler } from "./stub-key-handler";
 import { stubActionHandler } from "./stub-action-handler";
-import { stubMidiHandler } from "@/ui/stub-midi-handler";
+import { stubMidiHandler } from "./stub-midi-handler";
 import { setTitle } from "@/commands/basic";
 import { frac, newId, newPianoScore, note } from "@/model";
 import type { Score } from "@/model";
@@ -182,7 +182,7 @@ describe("EditorStore.applyAction with the stub action handler", () => {
   });
 });
 
-describe("EditorStore.applyMidi with the MIDI stub (src/ui/stub-midi-handler.ts)", () => {
+describe("EditorStore.applyMidi with the MIDI stub (test/ui/stub-midi-handler.ts)", () => {
   it("returns false and leaves the snapshot untouched when note entry is off", () => {
     const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler, stubMidiHandler);
     const before = store.getSnapshot();

@@ -39,7 +39,7 @@ below.)
 | Key | Action |
 |-----|--------|
 | `A` … `G` | Enter that pitch at the cursor, nearest octave to the previous note, with the key signature's sharp/flat applied. Cursor advances. |
-| `Shift+A` … `Shift+G` | Add that pitch to the chord just entered (cursor stays) |
+| `Shift+A` … `Shift+G` | Add that pitch above the top note of the chord just entered (cursor stays) |
 | `0` | Enter a rest of the current duration |
 | `+` or `=` | Next note gets a sharp (or sharpen selected notes) |
 | `-` | Next note gets a flat (or flatten selected notes) |

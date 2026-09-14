@@ -91,6 +91,23 @@ export function eventBeforeCursor(score: Score, cursor: Cursor): PositionedVoice
   return best;
 }
 
+/**
+ * The event a chord tone (Shift+letter, or a MIDI key played while others are held)
+ * should join: the event just before the cursor, or, when the cursor sits at the start
+ * of a measure because the previous note filled the last one, that previous measure's
+ * final event in the same voice. Deliberately separate from `eventBeforeCursor`, whose
+ * callers (Backspace) rely on it never crossing a barline.
+ */
+export function chordTarget(score: Score, cursor: Cursor): PositionedVoiceEvent | undefined {
+  const here = eventBeforeCursor(score, cursor);
+  if (here) return here;
+  if (cursor.offset.num !== 0 || cursor.measureIndex === 0) return undefined;
+  const prev = eventsInVoice(score, { ...cursor, measureIndex: cursor.measureIndex - 1 });
+  let last: PositionedVoiceEvent | undefined;
+  for (const pe of prev) if (!last || lt(last.offset, pe.offset)) last = pe;
+  return last;
+}
+
 /** The key signature in effect at `measureIndex` (the most recent `MeasureAttributes.keySig` at or before it). */
 export function keySignatureAt(score: Score, measureIndex: number): KeySignature {
   let key: KeySignature = { fifths: 0, mode: "major" };

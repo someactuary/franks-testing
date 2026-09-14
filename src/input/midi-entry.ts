@@ -6,7 +6,7 @@
  */
 import { keyAlter, STEPS, toMidi, type Alter, type KeySignature, type Pitch, type Step } from "@/model/pitch";
 import { addNoteToEvent } from "@/commands/edit";
-import { eventBeforeCursor, keySignatureAt } from "./navigation";
+import { chordTarget, keySignatureAt } from "./navigation";
 import { enterPitch } from "./step-entry";
 import type { MidiHandler } from "./types";
 
@@ -68,7 +68,7 @@ export const handleMidiNote: MidiHandler = (state, ev) => {
   const pitch = spellMidi(ev.note, key);
 
   if (ev.held.length > 0) {
-    const before = eventBeforeCursor(state.score, state.cursor);
+    const before = chordTarget(state.score, state.cursor);
     if (!before || before.event.kind !== "note") {
       return { commands: [], message: "No chord to add a note to" };
     }

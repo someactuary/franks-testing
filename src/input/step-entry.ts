@@ -19,7 +19,7 @@ import {
   type NoteValue,
   type Score,
 } from "@/model";
-import { keyAlter, STEPS, type Alter, type Pitch, type Step } from "@/model/pitch";
+import { diatonic, keyAlter, STEPS, type Alter, type Pitch, type Step } from "@/model/pitch";
 import { locateEvent, locateNote } from "@/commands/locate";
 import { addMeasures, removeMeasure, toggleTie } from "@/commands/basic";
 import {
@@ -40,6 +40,7 @@ import { copySelection, pasteAt } from "./clipboard";
 import {
   absoluteOffset,
   eventAtCursor,
+  chordTarget,
   eventBeforeCursor,
   eventsInVoice,
   idsForEvent,
@@ -649,12 +650,18 @@ export const handleKey: KeyHandler = (state, key) => {
     const octave = nearestOctave(step, entry.referenceOctave, entry.referenceStepIndex);
     const alter = letterAlter(state, step);
     if (key.shift) {
-      const before = eventBeforeCursor(score, cursor);
+      const before = chordTarget(score, cursor);
       if (!before || before.event.kind !== "note") {
         return { commands: [], message: "No chord to add a note to" };
       }
+      // Chords are built upward, as a pianist spells them (G, B, D = root-position G
+      // major): the added pitch goes in the lowest octave strictly above the chord's
+      // current top note, not in the octave nearest the last entered note.
+      const top = Math.max(...before.event.notes.map((n) => diatonic(n.pitch)));
+      const stepIndex = STEPS.indexOf(step);
+      const chordOctave = Math.floor((top - stepIndex) / 7) + 1;
       return {
-        commands: [addNoteToEvent(before.event.id, { step, alter, octave })],
+        commands: [addNoteToEvent(before.event.id, { step, alter, octave: chordOctave })],
         entry: { ...entry, alter: null },
       };
     }

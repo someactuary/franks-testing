@@ -21,7 +21,7 @@ import { newSatbScore } from "./presets";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
 import { handleAction } from "@/input/actions";
-import { stubMidiHandler } from "./stub-midi-handler";
+import { handleMidiNote } from "@/input/midi-entry";
 import { MidiInputs, WEB_MIDI_UNSUPPORTED_MESSAGE } from "./midi";
 import type { MidiInputInfo } from "./midi";
 import { hitTestPoint, locateEvent } from "./layout-utils";
@@ -193,7 +193,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
-  const editor = useEditorStore(initialScore, handleKey, handleAction, stubMidiHandler);
+  const editor = useEditorStore(initialScore, handleKey, handleAction, handleMidiNote);
 
   const [midi] = useState(() => new MidiInputs());
   const [midiSupported] = useState(() => midi.isSupported());

@@ -376,3 +376,21 @@ score canvas is custom SVG either way).
   corpus; Opus lyrics/ornaments/arpeggio/tremolo engraving; Sonnet lyric entry mode,
   MIDI spelling/entry, small fixes; Sonnet MIDI device UI, lyric-mode status, MusicXML
   open/export.
+- 2026-09-14 (M3 done, after a rate-limit stop and resume of all four agents): 641 tests,
+  lint and build green. MusicXML import/export (partwise, .mxl, voices, tuplets, lyrics,
+  directions, repeats/endings, SATB parts → staves); every fixture round-trips; all
+  exports and the corpus validate against the W3C MusicXML schema with xmllint.
+  Lyrics: model, engraving (verse lanes, hyphens, extenders, spacing, dynamics above
+  lyric staves), entry mode (L / ⌘⇧L, Space, "-", "_"). Ornaments, arpeggio, tremolo
+  drawn. MIDI: Web MIDI device UI, key-signature spelling, chords from held keys.
+  Architect fixes at integration: hyphens repeated every 12 sp (one hyphen per word
+  break across a barline); chord tones after a note that filled the measure now join
+  it (found in the browser: MIDI G-B-D came out as G alone); Shift+letter builds chords
+  upward above the top note; stale status messages cleared on the next key.
+
+  Carry-overs into M4:
+  - Exported MusicXML not yet opened in MuseScore/Dorico (schema-valid only).
+  - Arpeggio uses a scaled single glyph; wiggle glyphs are excluded by gen-smufl.ts.
+  - Pedal line vs lyrics collision possible (lyrics excluded from the skyline).
+  - Only voice 0 carries directions on MusicXML export.
+  - Earlier carry-overs still open: courtesy key signature at system end, text metrics.

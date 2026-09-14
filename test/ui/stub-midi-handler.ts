@@ -1,4 +1,4 @@
-// TEMPORARY: replaced by @/input/midi-entry at merge
+// Test-only stub (the app uses @/input/midi-entry)
 /**
  * Minimal `MidiHandler` stub so the MIDI toolbar and `store.applyMidi` pipeline
  * (src/ui/midi.ts) can be built and exercised before the real `handleMidiNote`

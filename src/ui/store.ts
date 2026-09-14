@@ -200,7 +200,9 @@ export class EditorStore {
     if (result.selection) this.selection = result.selection;
     if (result.entry) this.entry = result.entry;
     if (result.clipboard !== undefined) this.clipboard = result.clipboard;
-    if (result.message !== undefined) this.message = result.message;
+    // Each handled key/action replaces the status message; a result without one clears
+    // it, so an old "No chord to add a note to" doesn't linger behind later work.
+    this.message = result.message ?? null;
 
     this.emit();
   }
