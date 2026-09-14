@@ -11,8 +11,13 @@ import type { KeyStroke } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
 import { ShortcutsPanel } from "./ShortcutsPanel";
+import { StavesPanel } from "./StavesPanel";
+import { Palettes } from "./Palettes";
+import { newSatbScore } from "./presets";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
+// TEMPORARY: replaced by @/input/actions at merge (see stub-action-handler.ts).
+import { stubActionHandler } from "./stub-action-handler";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
@@ -67,17 +72,22 @@ function isMac(): boolean {
 
 interface NewScoreFormProps {
   onCreate: (opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) => void;
+  onCreateSatb: (opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) => void;
   onCancel: () => void;
 }
 
-function NewScoreForm({ onCreate, onCancel }: NewScoreFormProps) {
+function NewScoreForm({ onCreate, onCreateSatb, onCancel }: NewScoreFormProps) {
   const [measureCount, setMeasureCount] = useState(8);
   const [timeSigLabel, setTimeSigLabel] = useState(TIME_SIG_OPTIONS[0]!.label);
   const [keySigFifths, setKeySigFifths] = useState(0);
 
-  function handleSubmit() {
+  function currentOpts() {
     const timeSig = TIME_SIG_OPTIONS.find((o) => o.label === timeSigLabel)?.value ?? TIME_SIG_OPTIONS[0]!.value;
-    onCreate({ measureCount, timeSig, keySigFifths });
+    return { measureCount, timeSig, keySigFifths };
+  }
+
+  function handleSubmit() {
+    onCreate(currentOpts());
   }
 
   return (
@@ -119,6 +129,9 @@ function NewScoreForm({ onCreate, onCancel }: NewScoreFormProps) {
         </select>
       </label>
       <button type="submit">Create</button>
+      <button type="button" onClick={() => onCreateSatb(currentOpts())} title="4 staves: Soprano/Alto/Tenor/Bass">
+        New SATB
+      </button>
       <button type="button" onClick={onCancel}>
         Cancel
       </button>
@@ -132,10 +145,11 @@ export function App() {
   const [newFormOpen, setNewFormOpen] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [stavesOpen, setStavesOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
-  const editor = useEditorStore(initialScore, handleKey);
+  const editor = useEditorStore(initialScore, handleKey, stubActionHandler);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,6 +213,19 @@ export function App() {
       timeSig: opts.timeSig,
       keySig: { fifths: opts.keySigFifths, mode: "major" },
     });
+    setNewFormOpen(false);
+  }
+
+  function handleNewSatb(opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) {
+    setIoMessage(null);
+    setSampleName("");
+    editor.loadScore(
+      newSatbScore({
+        measureCount: opts.measureCount,
+        timeSig: opts.timeSig,
+        keySig: { fifths: opts.keySigFifths, mode: "major" },
+      }),
+    );
     setNewFormOpen(false);
   }
 
@@ -280,6 +307,13 @@ export function App() {
     [editor, layout],
   );
 
+  const handleDragPitch = useCallback(
+    (noteId: string, diatonicDelta: number) => {
+      editor.applyAction({ kind: "dragPitch", noteId, diatonicDelta });
+    },
+    [editor],
+  );
+
   const cursor = editor.cursor;
   const currentStaffDef = editor.score.parts[cursor.partIndex]?.staves[cursor.staffIndex];
   const clef = currentStaffDef ? clefLabel(currentStaffDef.initialClef) : "?";
@@ -320,6 +354,9 @@ export function App() {
         <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
           Shortcuts
         </button>
+        <button type="button" onClick={() => setStavesOpen((v) => !v)} aria-pressed={stavesOpen}>
+          Staves
+        </button>
         <label>
           Samples:{" "}
           <select value={sampleName} onChange={(e) => handleSampleChange(e.target.value)}>
@@ -332,8 +369,18 @@ export function App() {
           </select>
         </label>
       </header>
-      {newFormOpen && <NewScoreForm onCreate={handleNewScore} onCancel={() => setNewFormOpen(false)} />}
+      {newFormOpen && (
+        <NewScoreForm onCreate={handleNewScore} onCreateSatb={handleNewSatb} onCancel={() => setNewFormOpen(false)} />
+      )}
+      <Palettes font={BRAVURA} onApplyAction={editor.applyAction} />
       {helpOpen && <ShortcutsPanel onClose={() => setHelpOpen(false)} />}
+      {stavesOpen && editor.score.parts[cursor.partIndex] && (
+        <StavesPanel
+          part={editor.score.parts[cursor.partIndex]!}
+          onApplyAction={editor.applyAction}
+          onClose={() => setStavesOpen(false)}
+        />
+      )}
       <main>
         <ScoreView
           layout={layout}
@@ -345,12 +392,21 @@ export function App() {
           onClickElement={handleClickElement}
           onClickEmpty={handleClickEmpty}
           onSelectMany={handleSelectMany}
+          onDragPitch={handleDragPitch}
         />
       </main>
       <footer className="status-bar">
         <span>
-          Measure {cursor.measureIndex + 1} &middot; Staff {clef} &middot; Voice {cursor.voiceIndex + 1} &middot;
-          Duration {durationName}
+          Measure {cursor.measureIndex + 1} &middot; Staff {clef} &middot; Voice {cursor.voiceIndex + 1}{" "}
+          <button
+            type="button"
+            className="voice-toggle"
+            title="Toggle voice 1 / 2"
+            onClick={() => editor.applyAction({ kind: "setVoice", voiceIndex: cursor.voiceIndex === 1 ? 0 : 1 })}
+          >
+            Voice 1/2
+          </button>
+          &middot; Duration {durationName}
           {dots} &middot;{" "}
           <span className={editor.entry.active ? "entry-on" : "entry-off"}>
             {editor.entry.active ? "Note entry ON" : "Note entry OFF"}

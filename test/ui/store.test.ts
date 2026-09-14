@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EditorStore } from "@/ui/store";
 import { stubKeyHandler } from "./stub-key-handler";
+import { stubActionHandler } from "@/ui/stub-action-handler";
 import { setTitle } from "@/commands/basic";
 import { frac, newId, newPianoScore, note } from "@/model";
 import type { Score } from "@/model";
@@ -20,6 +21,14 @@ function makeTestScore(): Score {
   part.measures[1]!.staves[0]!.voices = [
     { id: newId(), index: 0, items: [note("G4", 4), note("A4", 4), note("B4", 4), note("C5", 4)] },
   ];
+  return score;
+}
+
+/** Like `makeTestScore`, but measure 0/staff 0 also has a voice 1 so the cursor can address it (clampCursor clamps voiceIndex to the voices that already exist there). */
+function makeTwoVoiceScore(): Score {
+  const score = makeTestScore();
+  const sm = score.parts[0]!.measures[0]!.staves[0]!;
+  sm.voices = [...sm.voices, { id: newId(), index: 1, items: [note("C3", 4), note("C3", 4), note("C3", 4), note("C3", 4)] }];
   return score;
 }
 
@@ -125,6 +134,46 @@ describe("EditorStore cursor clamping", () => {
     store.loadScore(newPianoScore({ measureCount: 2 }));
     expect(store.getSnapshot().cursor.measureIndex).toBe(0); // loadScore resets to the start
     expect(store.getSnapshot().canUndo).toBe(false);
+  });
+});
+
+describe("EditorStore.applyAction with the stub action handler", () => {
+  it("setVoice changes cursor.voiceIndex without touching history (no command, just a cursor move)", () => {
+    // Voice 1 must already exist at the cursor's measure/staff, or clampCursor
+    // (store.ts) clamps voiceIndex back down — voices are created on demand
+    // by writing into them (docs/ARCHITECTURE.md "M2 contracts > Voices"),
+    // which this stub, unlike the real handler, doesn't do.
+    const store = new EditorStore(makeTwoVoiceScore(), stubKeyHandler, stubActionHandler);
+    expect(store.getSnapshot().cursor.voiceIndex).toBe(0);
+
+    expect(store.applyAction({ kind: "setVoice", voiceIndex: 1 })).toBe(true);
+    expect(store.getSnapshot().cursor.voiceIndex).toBe(1);
+    expect(store.getSnapshot().canUndo).toBe(false); // no command was run, just a cursor update
+  });
+
+  it("setClef updates the target staff's initialClef through a real (undoable) command", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler);
+    expect(store.getSnapshot().score.parts[0]!.staves[1]!.initialClef).toBe("bass");
+
+    expect(store.applyAction({ kind: "setClef", staffIndex: 1, clef: "treble" })).toBe(true);
+    expect(store.getSnapshot().score.parts[0]!.staves[1]!.initialClef).toBe("treble");
+    expect(store.getSnapshot().canUndo).toBe(true);
+
+    store.undo();
+    expect(store.getSnapshot().score.parts[0]!.staves[1]!.initialClef).toBe("bass");
+  });
+
+  it("an action the stub doesn't implement is still handled, with a 'not wired yet' message", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler, stubActionHandler);
+    expect(store.applyAction({ kind: "fermata" })).toBe(true);
+    expect(store.getSnapshot().message).toBe("not wired yet");
+    expect(store.getSnapshot().canUndo).toBe(false); // no command was run
+  });
+
+  it("without an actionHandler, applyAction always returns false (nothing wired at all)", () => {
+    const store = new EditorStore(makeTestScore(), stubKeyHandler);
+    expect(store.applyAction({ kind: "setVoice", voiceIndex: 1 })).toBe(false);
+    expect(store.getSnapshot().cursor.voiceIndex).toBe(0);
   });
 });
 

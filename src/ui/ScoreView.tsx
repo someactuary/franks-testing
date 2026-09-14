@@ -27,9 +27,13 @@ export interface ScoreViewProps {
   onClickEmpty?: (pageIndex: number, xSp: number, ySp: number) => void;
   /** Fired when a rubber-band drag over empty space completes. `additive` means "union with the current selection" (shift was held). */
   onSelectMany?: (ids: string[], additive: boolean) => void;
+  /** Fired when a notehead drag completes with a non-zero vertical movement. */
+  onDragPitch?: (noteId: string, diatonicDelta: number) => void;
 }
 
 const CURSOR_COLOR = "#2f7cf6";
+/** Cursor line colour while voice 2 (index 1) is active, so the active voice is visible at a glance. */
+const ACTIVE_VOICE_CURSOR_COLOR = "#2e9e5b";
 const CURSOR_WIDTH_SP = 0.1;
 const CURSOR_OPACITY = 0.55;
 const CURSOR_OVERHANG_SP = 0.5;
@@ -47,6 +51,12 @@ const RUBBER_BAND_DASH = "0.25,0.18";
 
 /** Below this page-sp movement, a pointerdown/pointerup pair counts as a click, not a drag. */
 const DRAG_THRESHOLD_SP = 0.3;
+
+/** Vertical distance (sp) of one diatonic staff step (half a staff space), per docs/ARCHITECTURE.md. */
+const STAFF_STEP_SP = 0.5;
+const PITCH_DRAG_COLOR = "#e67e22";
+const PITCH_DRAG_STROKE_SP = 0.12;
+const PITCH_DRAG_DASH = "0.2,0.16";
 
 /** Converts a client-space point to the SVG's own user-space (its viewBox units) via the screen CTM. */
 function clientPointToSvg(svg: SVGSVGElement, clientX: number, clientY: number): { x: number; y: number } | null {
@@ -76,6 +86,8 @@ interface DragStart {
   shift: boolean;
   mod: boolean;
   onElement: { id: string; role: Ref["role"] } | null;
+  /** The notehead's own bounding box, captured at pointerdown; only set when `onElement.role === "notehead"`. */
+  noteBox: Rect | null;
 }
 
 interface RubberBandState {
@@ -83,14 +95,22 @@ interface RubberBandState {
   rect: Rect;
 }
 
+/** Ghost outline shown while dragging a notehead to a new staff step. */
+interface PitchDragState {
+  pageIndex: number;
+  box: Rect;
+  diatonicDelta: number;
+}
+
 /**
  * Renders every page of a LayoutResult as inline SVG, stacked vertically,
  * each wrapped for a page-shadow look on screen (see app.css/print.css).
- * Overlays a thin entry cursor and rounded selection outlines (around each
- * selected notehead/rest, Noteflight-style) in the existing overlay <svg>;
- * pointer interaction on the page container resolves to an element click
- * (with shift/mod modifiers), an empty-space click, or an empty-space
- * rubber-band drag.
+ * Overlays a thin entry cursor (green while voice 2 is active) and rounded
+ * selection outlines (around each selected notehead/rest, Noteflight-style)
+ * in the existing overlay <svg>; pointer interaction on the page container
+ * resolves to an element click (with shift/mod modifiers), a notehead drag
+ * (ghost outline snapped to the nearest staff step, `onDragPitch` on release
+ * if it moved), an empty-space click, or an empty-space rubber-band drag.
  */
 export function ScoreView({
   layout,
@@ -102,10 +122,12 @@ export function ScoreView({
   onClickElement,
   onClickEmpty,
   onSelectMany,
+  onDragPitch,
 }: ScoreViewProps) {
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const dragRef = useRef<DragStart | null>(null);
   const [rubberBand, setRubberBand] = useState<RubberBandState | null>(null);
+  const [pitchDrag, setPitchDrag] = useState<PitchDragState | null>(null);
 
   const pageSvgs = useMemo(
     () =>
@@ -129,7 +151,8 @@ export function ScoreView({
     const x = loc.system.x + cursorX(loc.measure, cursor.offset) - CURSOR_X_OFFSET_SP;
     const topY = loc.system.y + staffY(loc.system, cursor.partIndex, cursor.staffIndex) - CURSOR_OVERHANG_SP;
     const bottomY = loc.system.y + staff.y + (staff.lineCount - 1) + CURSOR_OVERHANG_SP;
-    return { pageIndex: loc.page.index, x, y1: topY, y2: bottomY };
+    const color = cursor.voiceIndex === 1 ? ACTIVE_VOICE_CURSOR_COLOR : CURSOR_COLOR;
+    return { pageIndex: loc.page.index, x, y1: topY, y2: bottomY, color };
   }, [layout, cursor, entryActive]);
 
   const boxesByPage = useMemo(() => {
@@ -161,6 +184,7 @@ export function ScoreView({
     if (!svg) return;
     const pt = clientPointToSvg(svg, event.clientX, event.clientY);
     if (!pt) return;
+    const noteBox = onElement?.role === "notehead" ? (selectionBoxes(layout, font, [onElement.id])[0] ?? null) : null;
     dragRef.current = {
       pageIndex,
       startX: pt.x,
@@ -168,13 +192,34 @@ export function ScoreView({
       shift: event.shiftKey,
       mod: event.metaKey || event.ctrlKey,
       onElement,
+      noteBox,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const start = dragRef.current;
-    if (!start || start.onElement) return;
+    if (!start) return;
+
+    // Dragging a notehead: track a "ghost" outline at the staff step under the
+    // pointer (not a rubber band). A click without movement stays a click.
+    if (start.onElement?.role === "notehead") {
+      if (!start.noteBox) return;
+      const svg = svgFor(start.pageIndex);
+      if (!svg) return;
+      const pt = clientPointToSvg(svg, event.clientX, event.clientY);
+      if (!pt) return;
+      const dx = pt.x - start.startX;
+      const dy = pt.y - start.startY;
+      if (!pitchDrag && Math.hypot(dx, dy) < DRAG_THRESHOLD_SP) return;
+      const diatonicDelta = Math.round(-dy / STAFF_STEP_SP);
+      const box: Rect = { ...start.noteBox, y: start.noteBox.y - diatonicDelta * STAFF_STEP_SP };
+      setPitchDrag({ pageIndex: start.pageIndex, box, diatonicDelta });
+      return;
+    }
+
+    if (start.onElement) return; // other element kinds have no drag behaviour yet
+
     const svg = svgFor(start.pageIndex);
     if (!svg) return;
     const pt = clientPointToSvg(svg, event.clientX, event.clientY);
@@ -190,7 +235,15 @@ export function ScoreView({
     dragRef.current = null;
     const band = rubberBand;
     setRubberBand(null);
+    const drag = pitchDrag;
+    setPitchDrag(null);
     if (!start) return;
+
+    if (start.onElement?.role === "notehead" && drag) {
+      if (drag.diatonicDelta !== 0) onDragPitch?.(start.onElement.id, drag.diatonicDelta);
+      else onClickElement?.(start.onElement.id, start.onElement.role, { shift: start.shift, mod: start.mod });
+      return;
+    }
 
     if (start.onElement) {
       onClickElement?.(start.onElement.id, start.onElement.role, { shift: start.shift, mod: start.mod });
@@ -247,9 +300,22 @@ export function ScoreView({
                   y1={cursorLine.y1}
                   x2={cursorLine.x}
                   y2={cursorLine.y2}
-                  stroke={CURSOR_COLOR}
+                  stroke={cursorLine.color}
                   strokeOpacity={CURSOR_OPACITY}
                   strokeWidth={CURSOR_WIDTH_SP}
+                />
+              )}
+              {pitchDrag && pitchDrag.pageIndex === page.index && (
+                <rect
+                  x={pitchDrag.box.x - SELECTION_PADDING_SP}
+                  y={pitchDrag.box.y - SELECTION_PADDING_SP}
+                  width={pitchDrag.box.w + 2 * SELECTION_PADDING_SP}
+                  height={pitchDrag.box.h + 2 * SELECTION_PADDING_SP}
+                  rx={SELECTION_RADIUS_SP}
+                  fill="none"
+                  stroke={PITCH_DRAG_COLOR}
+                  strokeWidth={PITCH_DRAG_STROKE_SP}
+                  strokeDasharray={PITCH_DRAG_DASH}
                 />
               )}
               {rubberBand && rubberBand.pageIndex === page.index && (
