@@ -31,4 +31,13 @@
     page-break-after: auto;
     break-after: auto;
   }
+
+  /* Cursor/selection are editing aids, not part of the printed score. */
+  .editor-overlay {
+    display: none;
+  }
+
+  .status-bar {
+    display: none;
+  }
 }
