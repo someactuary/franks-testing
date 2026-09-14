@@ -8,6 +8,7 @@
     background: #fff;
   }
 
+  .shortcuts-panel,
   .toolbar {
     display: none;
   }

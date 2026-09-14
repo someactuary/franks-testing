@@ -10,6 +10,7 @@ import { parseScore, serializeScore } from "@/io/pscore";
 import type { KeyStroke } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
+import { ShortcutsPanel } from "./ShortcutsPanel";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
 import { hitTestPoint, locateEvent } from "./layout-utils";
@@ -130,6 +131,7 @@ export function App() {
   const [sampleName, setSampleName] = useState("");
   const [newFormOpen, setNewFormOpen] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
@@ -296,6 +298,9 @@ export function App() {
         <button type="button" onClick={() => window.print()}>
           Print
         </button>
+        <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
+          Shortcuts
+        </button>
         <label>
           Samples:{" "}
           <select value={sampleName} onChange={(e) => handleSampleChange(e.target.value)}>
@@ -309,6 +314,7 @@ export function App() {
         </label>
       </header>
       {newFormOpen && <NewScoreForm onCreate={handleNewScore} onCancel={() => setNewFormOpen(false)} />}
+      {helpOpen && <ShortcutsPanel onClose={() => setHelpOpen(false)} />}
       <main>
         <ScoreView
           layout={layout}
@@ -324,9 +330,18 @@ export function App() {
         <span>
           Measure {cursor.measureIndex + 1} &middot; Staff {clef} &middot; Voice {cursor.voiceIndex + 1} &middot;
           Duration {durationName}
-          {dots} &middot; Entry {editor.entry.active ? "ON" : "OFF"}
+          {dots} &middot;{" "}
+          <span className={editor.entry.active ? "entry-on" : "entry-off"}>
+            {editor.entry.active ? "Note entry ON" : "Note entry OFF"}
+          </span>
         </span>
-        {statusMessage && <span className="status-bar-message">{statusMessage}</span>}
+        {statusMessage ? (
+          <span className="status-bar-message">{statusMessage}</span>
+        ) : (
+          !editor.entry.active && (
+            <span className="status-bar-hint">Press N to start entering notes, or click Shortcuts.</span>
+          )
+        )}
       </footer>
     </div>
   );

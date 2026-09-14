@@ -1,69 +1,72 @@
 # Keyboard Shortcuts
 
-**Status: Planned — not yet implemented**
+These are the bindings implemented in `src/input/step-entry.ts` (M1). The status bar
+shows the current measure, staff, duration, and whether note entry is ON or OFF.
 
-This is the planned keyboard reference for the piano score editor, drawn from the project roadmap. These shortcuts are not yet available in the current version.
-
-## Step Entry — Duration
-
-| Key | Action |
-|-----|--------|
-| `1` | Whole note |
-| `2` | Half note |
-| `4` | Quarter note |
-| `8` | Eighth note |
-| `6` | Sixteenth note |
-| `3` | Thirty-second note |
-| `.` | Toggle dot on current duration |
-
-## Step Entry — Pitch
+## Modes
 
 | Key | Action |
 |-----|--------|
-| `A–G` | Enter note at that pitch (nearest octave) |
-| `Shift + ↑` | Octave up |
-| `Shift + ↓` | Octave down |
-| `+` or `#` | Sharp |
-| `-` or `b` | Flat |
-| `Shift + Letter` | Add to chord (instead of replacing) |
-| `0` | Rest |
+| `N` | Toggle note entry mode (required before typing notes) |
+| `Esc` | Leave note entry, clear selection |
 
-## Navigation & Editing
+## Durations (note entry on)
 
-| Key | Action |
-|-----|--------|
-| `Tab` | Move cursor forward |
-| `Shift + Tab` | Move cursor backward |
-| `↑` / `↓` | Move pitch up/down a staff line |
-| `←` / `→` | Move cursor left/right in measure |
-| `V` | Switch voice |
-| `X` | Cross-staff (toggle between treble and bass) |
-| `T` | Tie to next note |
-| `Delete` | Delete note at cursor |
+| Key | Duration |
+|-----|----------|
+| `7` | Whole |
+| `6` | Half |
+| `5` | Quarter |
+| `4` | Eighth |
+| `3` | Sixteenth |
+| `2` | Thirty-second |
+| `1` | Sixty-fourth |
+| `.` | Toggle dot (`Alt+.` double dot) |
 
-## Articulations & Ornaments
+## Pitches and rests (note entry on)
 
 | Key | Action |
 |-----|--------|
-| Palette | Click to add articulations (staccato, tenuto, accent, etc.) |
-| Palette | Click to add ornaments (trill, mordent, turn, etc.) |
+| `A` … `G` | Enter that pitch at the cursor, nearest octave to the previous note, with the key signature's sharp/flat applied. Cursor advances. |
+| `Shift+A` … `Shift+G` | Add that pitch to the chord just entered (cursor stays) |
+| `0` | Enter a rest of the current duration |
+| `+` or `=` | Next note gets a sharp (or sharpen selected notes) |
+| `-` | Next note gets a flat (or flatten selected notes) |
+| `T` | Toggle tie on the last entered / selected note |
+| `Backspace` | Erase the note before the cursor |
+| `Delete` | Erase the note at the cursor |
 
-## Other
+Typing past the end of the last measure appends a new measure automatically.
+A note that would cross the barline is refused (message in the status bar).
+
+## Changing pitches
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Z` / `Cmd+Z` | Undo |
-| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo |
-| `Ctrl+S` / `Cmd+S` | Save |
-| `Ctrl+O` / `Cmd+O` | Open |
+| `↑` / `↓` | Move the selected note (or last entered note) up / down a semitone |
+| `Shift+↑` / `Shift+↓` | Up / down an octave |
 
-## MIDI Keyboard Input
+## Navigation
 
-When MIDI keyboard input is enabled:
-- Press keys on your MIDI device to enter pitches
-- Duration comes from the current keyboard-selected value
-- Hold multiple keys simultaneously to create chords
+| Key | Action |
+|-----|--------|
+| `←` / `→` | Previous / next note (crosses barlines) |
+| `Home` / `End` | Start / end of the measure |
+| `⌘←` / `⌘→` | Previous / next measure |
+| `Tab` | Switch between treble and bass staff |
+| Click a note | Select it and move the cursor there |
+| Click empty staff | Move the cursor there |
 
----
+## History
 
-For the full specification, see [PLAN.md](../PLAN.md) section 5 "User Input".
+| Key | Action |
+|-----|--------|
+| `⌘Z` | Undo |
+| `⌘⇧Z` | Redo |
+
+(`⌘` is `Ctrl` on Windows/Linux.)
+
+## Not yet implemented
+
+Mouse dragging of notes, voices 2–4, tuplets, slurs, dynamics, articulations,
+pedal, MIDI input. See PLAN.md milestones M2–M4.

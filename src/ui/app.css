@@ -130,3 +130,63 @@ body {
   height: 100%;
   pointer-events: none;
 }
+
+/* Shortcuts panel */
+.shortcuts-panel {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  width: 360px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  background: #fff;
+  color: #222;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  padding: 12px 14px;
+  font-size: 13px;
+  z-index: 20;
+}
+.shortcuts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.shortcuts-panel h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #666;
+}
+.shortcuts-panel table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.shortcuts-panel td {
+  padding: 2px 6px 2px 0;
+  vertical-align: top;
+}
+.shortcut-key {
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  color: #1a73e8;
+  width: 120px;
+}
+.shortcuts-footnote {
+  margin: 10px 0 0;
+  color: #666;
+}
+.entry-on {
+  color: #7fd67f;
+  font-weight: 600;
+}
+.entry-off {
+  color: #f0b060;
+  font-weight: 600;
+}
+.status-bar-hint {
+  opacity: 0.8;
+}
