@@ -14,7 +14,9 @@
 import { eq, lt, sub, toNumber, ZERO, type Fraction } from "@/model/duration";
 import type { Id, Score } from "@/model";
 import { allEvents, type Event } from "@/model/traverse";
-import type { LayoutResult, MeasureLayout, Page, System } from "@/engraving/layout-types";
+import type { GlyphPrim, LayoutResult, MeasureLayout, Page, System } from "@/engraving/layout-types";
+import { glyphBBox } from "@/render/smufl";
+import type { SmuflFontData } from "@/render/smufl/types";
 
 // ---------------------------------------------------------------------------
 // findSystemForMeasure
@@ -219,4 +221,95 @@ export function hitTestPoint(layout: LayoutResult, pageIndex: number, xSp: numbe
   }
 
   return { measureIndex: measure.measureIndex, staffIndex, offset };
+}
+
+// ---------------------------------------------------------------------------
+// selectionBoxes / idsInRect
+// ---------------------------------------------------------------------------
+
+export interface SelectionBox {
+  pageIndex: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** An axis-aligned rectangle in PAGE-local sp coordinates. */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Page-space bounding box of a notehead/rest glyph primitive, from the SMuFL
+ * font's glyph bbox. SMuFL bboxes are y UP relative to the glyph origin;
+ * layout/page space is y DOWN, so the vertical extent is flipped: the bbox's
+ * `ne` (max y up = visually highest point) becomes the smaller (top) page y.
+ */
+function glyphPrimPageBox(prim: GlyphPrim, system: System, font: SmuflFontData): { x: number; y: number; w: number; h: number } {
+  const bbox = glyphBBox(font, prim.glyph);
+  const scale = prim.scale ?? 1;
+  const left = prim.x + bbox.sw[0] * scale;
+  const right = prim.x + bbox.ne[0] * scale;
+  const top = prim.y - bbox.ne[1] * scale;
+  const bottom = prim.y - bbox.sw[1] * scale;
+  return {
+    x: system.x + left,
+    y: system.y + top,
+    w: right - left,
+    h: bottom - top,
+  };
+}
+
+/**
+ * Bounding boxes (page sp coordinates) of the notehead/rest glyph for each
+ * requested id. A note id yields the box of its notehead glyph; an event id
+ * (a rest) yields the box of its rest glyph. An id with no matching
+ * notehead/rest primitive (unknown id, or an id that only labels some other
+ * kind of primitive) contributes no box.
+ */
+export function selectionBoxes(layout: LayoutResult, font: SmuflFontData, ids: Id[]): SelectionBox[] {
+  if (ids.length === 0) return [];
+  const wanted = new Set(ids);
+  const boxes: SelectionBox[] = [];
+  for (const page of layout.pages) {
+    for (const system of page.systems) {
+      for (const prim of system.primitives) {
+        if (prim.type !== "glyph") continue;
+        const ref = prim.ref;
+        if (!ref || (ref.role !== "notehead" && ref.role !== "rest")) continue;
+        if (!wanted.has(ref.id)) continue;
+        boxes.push({ pageIndex: page.index, ...glyphPrimPageBox(prim, system, font) });
+      }
+    }
+  }
+  return boxes;
+}
+
+/**
+ * Ids of every notehead/rest primitive on `pageIndex` whose page-space
+ * bounding box intersects `rect` (edge-touching only doesn't count).
+ * Noteheads contribute their note id, rests their event id; results are
+ * deduplicated (a chord's notes are separate primitives/ids; a rest's dots
+ * are not selectable and don't contribute).
+ */
+export function idsInRect(layout: LayoutResult, font: SmuflFontData, pageIndex: number, rect: Rect): Id[] {
+  const page = layout.pages[pageIndex];
+  if (!page) return [];
+  const ids = new Set<Id>();
+  for (const system of page.systems) {
+    for (const prim of system.primitives) {
+      if (prim.type !== "glyph") continue;
+      const ref = prim.ref;
+      if (!ref || (ref.role !== "notehead" && ref.role !== "rest")) continue;
+      const box = glyphPrimPageBox(prim, system, font);
+      const intersects =
+        box.x < rect.x + rect.w && box.x + box.w > rect.x && box.y < rect.y + rect.h && box.y + box.h > rect.y;
+      if (intersects) ids.add(ref.id);
+    }
+  }
+  return Array.from(ids);
 }

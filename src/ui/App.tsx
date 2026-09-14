@@ -231,8 +231,14 @@ export function App() {
   }
 
   const handleClickElement = useCallback(
-    (id: string, _role: Ref["role"]) => {
-      editor.setSelection({ ids: [id] });
+    (id: string, _role: Ref["role"], modifiers: { shift: boolean; mod: boolean }) => {
+      if (modifiers.shift || modifiers.mod) {
+        const ids = editor.selection.ids;
+        const next = ids.includes(id) ? ids.filter((existing) => existing !== id) : [...ids, id];
+        editor.setSelection({ ids: next });
+      } else {
+        editor.setSelection({ ids: [id] });
+      }
       const loc = locateEvent(editor.score, id);
       if (!loc) return;
       editor.setCursor({
@@ -242,6 +248,19 @@ export function App() {
         voiceIndex: loc.voiceIndex,
         offset: loc.offset,
       });
+    },
+    [editor],
+  );
+
+  const handleSelectMany = useCallback(
+    (ids: string[], additive: boolean) => {
+      if (!additive) {
+        editor.setSelection({ ids });
+        return;
+      }
+      const merged = new Set(editor.selection.ids);
+      for (const id of ids) merged.add(id);
+      editor.setSelection({ ids: Array.from(merged) });
     },
     [editor],
   );
@@ -322,8 +341,10 @@ export function App() {
           idAttributes
           cursor={editor.cursor}
           selection={editor.selection}
+          entryActive={editor.entry.active}
           onClickElement={handleClickElement}
           onClickEmpty={handleClickEmpty}
+          onSelectMany={handleSelectMany}
         />
       </main>
       <footer className="status-bar">
