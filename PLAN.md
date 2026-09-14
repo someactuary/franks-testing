@@ -343,3 +343,9 @@ score canvas is custom SVG either way).
   across barlines by splitting into tied notes; Enter / shift+Enter insert a measure
   after / before; ⌘Backspace removes the measure; Delete erases a multi-selection.
   In-app Shortcuts panel. 306 tests. Verified headlessly by the architect.
+- 2026-09-13 (M2 start): Frank's additions: "." and duration keys act on selected notes;
+  add/remove staves with clef changes for SATB. Contracts: Part.bracket, StaffDef.name/
+  abbreviation, PaletteAction + ActionHandler. Fan-out (parallel): Opus E1 voices +
+  tuplets + staff groups/names; Opus E2 attachments + spanners + skyline; Sonnet C1 staff
+  commands, duration-on-selection, tuplet entry, notation commands, voices, handleAction,
+  keys; Sonnet U1 staves panel, SATB preset, palettes, notehead drag, voice toggle.
