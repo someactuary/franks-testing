@@ -1,0 +1,34 @@
+/*
+ * Print-only overrides. The actual @page { size: ... } rule is injected at
+ * runtime by App.tsx (as a <style>) because the page size in mm comes from
+ * the LayoutResult, not a static constant.
+ */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .toolbar {
+    display: none;
+  }
+
+  .page-stack {
+    gap: 0;
+    padding: 0;
+  }
+
+  .page-shadow {
+    box-shadow: none;
+  }
+
+  /* One SVG per printed page. */
+  .page-shadow {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .page-shadow:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
