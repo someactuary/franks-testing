@@ -24,13 +24,15 @@ function isSoleMeasureRest(voice: { items: readonly { kind: string; measureRest?
 
 /**
  * The voice addressed by `cursor`, or undefined if the cursor addresses a part/measure/
- * staff/voice that doesn't exist.
+ * staff/voice that doesn't exist. Looked up by `Voice.index` (not array position):
+ * voices are kept sorted by index, but the array may be sparse (e.g. voice 2 exists
+ * without voice 1), so position and index only coincide for voice 0.
  */
 function voiceAt(score: Score, cursor: Cursor) {
   const part = score.parts[cursor.partIndex];
   const pm = part?.measures[cursor.measureIndex];
   const sm = pm?.staves[cursor.staffIndex];
-  return sm?.voices[cursor.voiceIndex];
+  return sm?.voices.find((v) => v.index === cursor.voiceIndex);
 }
 
 /**

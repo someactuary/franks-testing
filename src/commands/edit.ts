@@ -5,7 +5,7 @@
  * here by `writeEvent`.
  */
 import type { Draft } from "immer";
-import { newId, rest } from "@/model";
+import { emptyVoice, newId, rest } from "@/model";
 import {
   add,
   eq,
@@ -96,6 +96,11 @@ function isSoleMeasureRest(voice: { items: readonly VoiceItem[] }): boolean {
  * tuplet is refused ("Does not fit in the tuplet") rather than silently escaping it.
  * A cursor outside any tuplet that would overlap one is still refused as before
  * ("Cannot write into a tuplet yet").
+ *
+ * A cursor addressing a voice index that doesn't exist yet is not refused on that
+ * account: `writeSpan` creates it (a fresh measure-rest voice) on demand, so it's
+ * checked here as if it already existed in that shape (i.e. anything that fits the
+ * measure is fine).
  */
 export function canWrite(score: Score, cursor: Cursor, len: Fraction): string | null {
   const part = score.parts[cursor.partIndex];
@@ -104,14 +109,20 @@ export function canWrite(score: Score, cursor: Cursor, len: Fraction): string | 
   if (!pm) return `No measure at index ${cursor.measureIndex}`;
   const sm = pm.staves[cursor.staffIndex];
   if (!sm) return `No staff at index ${cursor.staffIndex}`;
-  const voice = sm.voices[cursor.voiceIndex];
-  if (!voice) return `No voice at index ${cursor.voiceIndex}`;
 
   let measureLen: Fraction;
   try {
     measureLen = measureLengthAt(score, cursor.measureIndex);
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
+  }
+
+  const voice = sm.voices.find((v) => v.index === cursor.voiceIndex);
+  if (!voice) {
+    // Not created yet: behaves exactly like a fresh (sole-measureRest) voice would.
+    return lt(measureLen, add(cursor.offset, len))
+      ? `Does not fit in the measure: ${fracToString(cursor.offset)} + ${fracToString(len)} exceeds ${fracToString(measureLen)}`
+      : null;
   }
 
   const target = resolveWriteTarget(voice, cursor.offset, measureLen, true);
@@ -316,15 +327,22 @@ function spanReplace(
 /**
  * Writes `newItems` at `cursor` in the voice it addresses, resolving into an
  * enclosing tuplet's own grid first if the cursor's offset lies inside one (see
- * `resolveWriteTarget`). Shared by `writeEvent` (single item) and `writeSequence`
- * (one call per measure-bounded chunk of a split event). Callers are responsible for
- * checking `canWrite` first (this never refuses).
+ * `resolveWriteTarget`). If the voice doesn't exist yet, creates it (index
+ * `cursor.voiceIndex`, filled with a measureRest, per docs/ARCHITECTURE.md's Voices
+ * M2 contract) and keeps `sm.voices` sorted by index. Shared by `writeEvent` (single
+ * item) and `writeSequence` (one call per measure-bounded chunk of a split event).
+ * Callers are responsible for checking `canWrite` first (this never refuses).
  */
 function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newItems: VoiceItem[]): void {
   const part = draft.parts[cursor.partIndex]!;
   const pm = part.measures[cursor.measureIndex]!;
   const sm = pm.staves[cursor.staffIndex]!;
-  const voice = sm.voices[cursor.voiceIndex]!;
+  let voice = sm.voices.find((v) => v.index === cursor.voiceIndex);
+  if (!voice) {
+    voice = emptyVoice(cursor.voiceIndex);
+    sm.voices.push(voice);
+    sm.voices.sort((a, b) => a.index - b.index);
+  }
   const measureLen = measureLengthAt(draft, cursor.measureIndex);
 
   const target = resolveWriteTarget(voice, cursor.offset, measureLen, true);
@@ -341,7 +359,9 @@ function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newIt
  * tuplet's own sounding rate rather than the notated one.
  */
 export function soundingLengthAt(score: Score, cursor: Cursor, notatedLen: Fraction): Fraction {
-  const voice = score.parts[cursor.partIndex]?.measures[cursor.measureIndex]?.staves[cursor.staffIndex]?.voices[cursor.voiceIndex];
+  const voice = score.parts[cursor.partIndex]?.measures[cursor.measureIndex]?.staves[cursor.staffIndex]?.voices.find(
+    (v) => v.index === cursor.voiceIndex,
+  );
   if (!voice) return notatedLen;
   let measureLen: Fraction;
   try {
@@ -648,6 +668,19 @@ export function toggleDotAt(eventId: string): Command {
       if (!hit) throw new Error(`toggleDotAt: no event with id "${eventId}"`);
       const dots: NotatedDuration["dots"] = hit.event.duration.dots === 0 ? 1 : 0;
       applyDurationChange(draft, eventId, { base: hit.event.duration.base, dots });
+    },
+  };
+}
+
+/** Toggles whether the rest with id `eventId` is drawn (still occupies time either way). Used by the "h" key on the current selection. */
+export function toggleRestInvisible(eventId: string): Command {
+  return {
+    label: "Toggle rest visibility",
+    apply(draft) {
+      const hit = locateEvent(draft, eventId);
+      if (!hit) throw new Error(`toggleRestInvisible: no event with id "${eventId}"`);
+      if (hit.event.kind !== "rest") throw new Error(`toggleRestInvisible: event "${eventId}" is not a rest`);
+      hit.event.invisible = !hit.event.invisible;
     },
   };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { frac, newPianoScore, note, rest, type Score, type VoiceItem } from "@/model";
 import { History } from "@/commands/history";
 import { makeTuplet } from "@/commands/edit";
+import { addStaff } from "@/commands/staves";
 import { defaultEditorState, handleKey } from "@/input/step-entry";
 import type { ClipboardContent, Cursor, EditorState, EntryState, KeyResult, KeyStroke, Selection } from "@/input/types";
 
@@ -632,5 +633,102 @@ describe("handleKey: writing into a tuplet", () => {
     // nothing was written: still the untouched triplet.
     const group = h.voiceItems(0)[0]!;
     expect(group.kind).toBe("tuplet");
+  });
+});
+
+describe("handleKey: voices", () => {
+  function voiceByIndex(h: Harness, voiceIndex: number, measureIndex = 0, staffIndex = 0) {
+    return h.history.current.parts[0]!.measures[measureIndex]!.staves[staffIndex]!.voices.find((v) => v.index === voiceIndex);
+  }
+
+  it('"v" cycles the cursor voice 0 -> 1 -> 0, reporting it in the message', () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    expect(h.cursor.voiceIndex).toBe(0);
+
+    const toOne = h.press({ key: "v" });
+    expect(h.cursor.voiceIndex).toBe(1);
+    expect(toOne?.message).toBe("Voice 2");
+
+    const toZero = h.press({ key: "v" });
+    expect(h.cursor.voiceIndex).toBe(0);
+    expect(toZero?.message).toBe("Voice 1");
+  });
+
+  it("mod+alt+1..4 sets the cursor voice directly", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+
+    h.press({ key: "3", mod: true, alt: true });
+    expect(h.cursor.voiceIndex).toBe(2);
+
+    h.press({ key: "1", mod: true, alt: true });
+    expect(h.cursor.voiceIndex).toBe(0);
+  });
+
+  it("writing into a voice index that doesn't exist creates it (measure-rest filled), keeping voices sorted by index", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.cursor = { ...h.cursor, voiceIndex: 1 };
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" });
+
+    const sm = h.history.current.parts[0]!.measures[0]!.staves[0]!;
+    expect(sm.voices.map((v) => v.index)).toEqual([0, 1]); // sorted, voice 0 untouched
+    const voice1 = voiceByIndex(h, 1)!;
+    expect(voice1.items[0]!.kind).toBe("note");
+    const voice0 = voiceByIndex(h, 0)!;
+    expect(voice0.items).toHaveLength(1);
+    expect(voice0.items[0]!.kind).toBe("rest");
+    if (voice0.items[0]!.kind === "rest") expect(voice0.items[0]!.measureRest).toBe(true);
+  });
+
+  it("creating voice 2 directly (skipping voice 1) still keeps the array sorted by index", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.cursor = { ...h.cursor, voiceIndex: 2 };
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" });
+
+    const sm = h.history.current.parts[0]!.measures[0]!.staves[0]!;
+    expect(sm.voices.map((v) => v.index)).toEqual([0, 2]);
+  });
+
+  it('"h" toggles invisible on selected rests', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const r = rest(4);
+    voice.items = [r, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [r.id] };
+
+    h.press({ key: "h" });
+    let updated = h.voiceItems(0)[0]!;
+    if (updated.kind !== "rest") throw new Error("expected a rest");
+    expect(updated.invisible).toBe(true);
+
+    h.selection = { ids: [r.id] };
+    h.press({ key: "h" });
+    updated = h.voiceItems(0)[0]!;
+    if (updated.kind !== "rest") throw new Error("expected a rest");
+    expect(updated.invisible).toBe(false);
+  });
+
+  it('"h" with nothing selected (or only notes selected) is unhandled', () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    expect(h.press({ key: "h" })).toBeNull();
+  });
+});
+
+describe("handleKey: Tab cycles all staves", () => {
+  it("addStaff then Tab cycles through all three staves", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 })); // treble, bass
+    h.history.execute(addStaff(1, "alto")); // treble, alto, bass
+
+    expect(h.cursor.staffIndex).toBe(0);
+    h.press({ key: "Tab" });
+    expect(h.cursor.staffIndex).toBe(1);
+    h.press({ key: "Tab" });
+    expect(h.cursor.staffIndex).toBe(2);
+    h.press({ key: "Tab" });
+    expect(h.cursor.staffIndex).toBe(0);
   });
 });

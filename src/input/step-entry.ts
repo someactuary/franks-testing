@@ -15,6 +15,7 @@ import {
   eraseEvent,
   setNoteAlter,
   soundingLengthAt,
+  toggleRestInvisible,
   transposeNotes,
   writeEvent,
 } from "@/commands/edit";
@@ -59,6 +60,9 @@ export function defaultEditorState(score: Score): EditorState {
  * 6 sixteenth, 3 thirty-second. 5, 7, 9 are unused (not in this map; the digit is ignored).
  */
 const DURATION_DIGITS: Record<string, NoteValue> = { "1": 1, "2": 2, "4": 4, "8": 8, "6": 16, "3": 32 };
+
+/** mod+alt+1..4 -> voice index 0..3 (see docs/ARCHITECTURE.md's Voices M2 contract). */
+const VOICE_DIGITS: Record<string, number> = { "1": 0, "2": 1, "3": 2, "4": 3 };
 
 /**
  * Among referenceOctave-1/+0/+1, the octave that puts `step` diatonically closest to
@@ -243,6 +247,25 @@ export const handleKey: KeyHandler = (state, key) => {
     return { commands: [removeMeasure(cursor.measureIndex)], cursor: { ...cursor, measureIndex, offset: ZERO } };
   }
 
+  // mod+alt+1..4: set the cursor's voice directly (1-based digit -> 0-based voice index).
+  if (key.mod && key.alt && key.key in VOICE_DIGITS) {
+    const voiceIndex = VOICE_DIGITS[key.key]!;
+    return { commands: [], cursor: { ...cursor, voiceIndex }, message: `Voice ${voiceIndex + 1}` };
+  }
+
+  // "v": cycles the cursor's voice 0 <-> 1.
+  if (!key.mod && lower === "v") {
+    const voiceIndex = cursor.voiceIndex === 0 ? 1 : 0;
+    return { commands: [], cursor: { ...cursor, voiceIndex }, message: `Voice ${voiceIndex + 1}` };
+  }
+
+  // "h": toggles whether the selected rest(s) are drawn (they still occupy time).
+  if (!key.mod && lower === "h") {
+    const rests = resolveSelection(score, state.selection).filter((r) => r.event.kind === "rest");
+    if (rests.length === 0) return null;
+    return { commands: rests.map((r) => toggleRestInvisible(r.event.id)) };
+  }
+
   // Clipboard.
   if (key.mod && lower === "c") {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
@@ -376,7 +399,10 @@ export const handleKey: KeyHandler = (state, key) => {
   }
 
   if (key.key === "Tab") {
-    return { commands: [], cursor: { ...cursor, staffIndex: cursor.staffIndex === 0 ? 1 : 0 } };
+    // Cycles through ALL staves of the part (0 -> 1 -> ... -> n-1 -> 0), not just two.
+    const staffCount = score.parts[cursor.partIndex]?.staves.length ?? 1;
+    const staffIndex = (cursor.staffIndex + 1) % staffCount;
+    return { commands: [], cursor: { ...cursor, staffIndex } };
   }
 
   if (key.key === "Home") {

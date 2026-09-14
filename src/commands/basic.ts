@@ -49,7 +49,7 @@ export function insertEventAfter(opts: InsertEventAfterOptions): Command {
       if (!pm) throw new Error(`insertEventAfter: no measure at index ${opts.measureIndex}`);
       const sm = pm.staves[opts.staffIndex];
       if (!sm) throw new Error(`insertEventAfter: no staff at index ${opts.staffIndex}`);
-      const voice = sm.voices[opts.voiceIndex];
+      const voice = sm.voices.find((v) => v.index === opts.voiceIndex);
       if (!voice) throw new Error(`insertEventAfter: no voice at index ${opts.voiceIndex}`);
 
       if (opts.afterEventId === null) {
