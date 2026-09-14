@@ -1,7 +1,10 @@
 # Keyboard Shortcuts
 
-These are the bindings implemented in `src/input/step-entry.ts` (M1). The status bar
-shows the current measure, staff, duration, and whether note entry is ON or OFF.
+These are the bindings implemented in `src/input/step-entry.ts` (M1/M2); several of
+them (marked below) go through the same `handleAction` used by the UI palettes, so
+they behave identically to clicking the equivalent palette button. The status bar
+shows the current measure, staff, voice, duration, and whether note entry is ON or
+OFF.
 
 ## Modes
 
@@ -24,7 +27,12 @@ Noteflight-style digit mapping:
 | `3` | Thirty-second |
 | `.` | Toggle dot (`Alt+.` double dot) |
 
-(`5`, `7`, `9` are unused.)
+With note entry **OFF** and a non-empty selection, a duration digit or `.` instead
+changes the *selected* events' durations directly (`setDuration/toggleDot`), leaving
+the pending entry duration alone.
+
+(`5`, `7`, `9` are unused as plain duration digits; see mod+digit tuplet shortcuts
+below.)
 
 ## Pitches and rests (note entry on)
 
@@ -49,6 +57,36 @@ A note that would cross the barline is refused (message in the status bar).
 | `↑` / `↓` | Move the selected note (or last entered note) up / down a semitone |
 | `Shift+↑` / `Shift+↓` | Up / down an octave |
 
+## Voices
+
+| Key | Action |
+|-----|--------|
+| `V` | Cycle the cursor's voice 0 ↔ 1 (status bar shows "Voice 1"/"Voice 2") |
+| `⌘⌥1` … `⌘⌥4` | Set the cursor's voice directly (voices 1–4) |
+| `H` | Toggle whether the selected rest(s) are drawn (they still occupy time) |
+
+Writing into a voice that doesn't exist yet creates it (filled with a measure rest)
+in the same step. Voice 0 always exists.
+
+## Notation
+
+| Key | Action |
+|-----|--------|
+| `S` | Slur: between the first/last selected notes, or from one selected note to the next |
+| `<` (Shift+`,`) | Crescendo hairpin (same endpoints as slur) |
+| `>` (Shift+`.`) | Diminuendo hairpin |
+| `⌘3` | Triplet (3:2) of the selected note/event |
+| `⌘5` | Quintuplet (5:4) |
+| `⌘6` | Sextuplet (6:4) |
+| `⌘7` | Septuplet (7:4) |
+| `⌘2` | Duplet (2:3) |
+| `⌘9` | 9:8 tuplet |
+
+Dynamics, pedal, ottava, fermata, tempo/expression text, fingering, and staff
+management (add/remove/rename a staff, bracket) don't have dedicated keys yet —
+they're `PaletteAction`s meant to be triggered from the UI palettes / staves panel,
+which call the same `handleAction` as the keys above.
+
 ## Navigation
 
 | Key | Action |
@@ -56,7 +94,7 @@ A note that would cross the barline is refused (message in the status bar).
 | `←` / `→` | Previous / next note (crosses barlines) |
 | `Home` / `End` | Start / end of the measure |
 | `⌘←` / `⌘→` | Previous / next measure |
-| `Tab` | Switch between treble and bass staff |
+| `Tab` | Cycle through all staves of the part (0 → 1 → … → n−1 → 0) |
 | Click a note | Select it and move the cursor there |
 | Click empty staff | Move the cursor there |
 
@@ -71,5 +109,7 @@ A note that would cross the barline is refused (message in the status bar).
 
 ## Not yet implemented
 
-Mouse dragging of notes, voices 2–4, tuplets, slurs, dynamics, articulations,
-pedal, MIDI input. See PLAN.md milestones M2–M4.
+MIDI input. Mouse dragging of notes (`dragPitch`) and the UI palettes/staves panel
+that would trigger dynamics/articulations/ottava/fermata/tempo/text/fingering/staff
+actions from a click are `PaletteAction`s already wired up in `src/input/actions.ts`,
+but need `src/ui` to expose them. See PLAN.md milestones M2–M4.
