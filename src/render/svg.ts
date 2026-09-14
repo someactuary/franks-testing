@@ -136,6 +136,8 @@ const TEXT_STYLES: Record<TextPrim["style"], TextStyleSpec> = {
   fingering: { family: "sans-serif" },
   measureNumber: { family: "sans-serif" },
   pageNumber: { family: "sans-serif" },
+  lyric: { family: "serif" },
+  staffName: { family: "serif" },
 };
 
 /** Maps the individual dynamics letters (p f m s z r) to their SMuFL glyph names. */

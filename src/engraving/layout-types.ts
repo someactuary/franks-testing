@@ -88,6 +88,8 @@ export interface Ref {
     | "tuplet"
     | "ledger"
     | "measure"
+    | "lyric"
+    | "ornament"
     | "other";
 }
 
@@ -138,7 +140,19 @@ export interface TextPrim {
   y: number;
   /** Font size in staff spaces. */
   size: number;
-  style: "title" | "subtitle" | "composer" | "dynamic" | "tempo" | "expression" | "plain" | "fingering" | "measureNumber" | "pageNumber";
+  style:
+    | "title"
+    | "subtitle"
+    | "composer"
+    | "dynamic"
+    | "tempo"
+    | "expression"
+    | "plain"
+    | "fingering"
+    | "measureNumber"
+    | "pageNumber"
+    | "lyric"
+    | "staffName";
   anchor?: "start" | "middle" | "end";
   ref?: Ref;
 }

@@ -134,3 +134,55 @@ turns them into a `KeyResult`; the store applies it exactly like a keystroke.
   bracket glyph top/bottom with a thick line), or nothing. Staff names left of the first
   system, right-aligned, abbreviations on later systems; the system indent grows to fit.
 - Tab cycles through all staves of the part.
+
+## M3 contracts
+
+### Lyrics
+- Model: `NoteEvent.lyrics: Lyric[]` (verse, text, syllabic, extend). Rests never carry lyrics.
+- Engraving (`src/engraving/lyrics.ts`, called from engrave.ts after attachments): one lane
+  per verse below the staff (verse 0 nearest), lane top = max(skyline bottom, staff bottom
+  + 2 sp) + 1 sp; verse pitch 1.9 sp; text 1.7 sp serif, style "lyric", centred on the
+  notehead x (left-aligned on the notehead for melismas is NOT done; always centred).
+  Hyphens (single "-" text) centred between syllables with syllabic begin/middle; repeated
+  every ~6 sp on long gaps; extender line (0.12 sp thick) from the end of an `extend`
+  syllable to the last note of the melisma. Lyric widths must widen spacing columns:
+  spacing.ts gets a per-column minimum from the widest lyric (estimated 0.55 × size × chars
+  + 0.6 sp padding). Refs: role "lyric", id = event id.
+- Entry (`src/input/step-entry.ts`): with a note selected, `L` (or ⌘L) enters lyric mode
+  on that event (verse from `entry.lyric?.verse ?? 0`; `⌘⇧L` next verse). In lyric mode:
+  printable characters append to the syllable (creating the Lyric if missing, syllabic
+  "single"); Backspace deletes a character (an empty syllable is removed); Space commits
+  and moves to the next NoteEvent in the voice (syllabic stays single/end); "-" commits
+  as begin/middle (the next syllable becomes end or middle accordingly) and moves on; "_"
+  marks `extend` and moves on; Left/Right move between notes without changing text; Enter
+  or Escape leaves lyric mode. Every keystroke is one command (grouped undo).
+
+### MIDI input
+- `src/input/midi-entry.ts` exports `handleMidiNote: MidiHandler`. Spelling: choose the
+  spelling of the MIDI number that matches the key signature at the cursor (its sharps or
+  flats), else natural, else sharp for sharp keys / flat for flat keys / sharp in C major.
+  With no keys held: write a NoteEvent of the current entry duration (same code path as a
+  typed letter, cursor advances, chordMode ignored). With keys held: add the pitch to the
+  event before the cursor (chord). Entry must be active; otherwise null.
+- `src/ui/midi.ts` wraps Web MIDI (`navigator.requestMIDIAccess`), tracks held notes per
+  device, and feeds `store.applyMidi(ev)`. A toolbar select lists inputs; the status bar
+  shows the connection state.
+
+### MusicXML
+- `src/io/musicxml.ts`: `importMusicXml(xml | mxl ArrayBuffer): Score`,
+  `exportMusicXml(score): string`. Partwise only. Parse with `DOMParser` (browser and
+  jsdom); .mxl via `fflate` (unzip, read META-INF/container.xml rootfile).
+- Import maps: parts → Parts (a part with `<staves>2` → two staves), divisions → Fraction,
+  attributes (time, key, clef incl. octave-change, staves), notes/chords/rests (voice,
+  staff, type+dots, tuplets via time-modification + tuplet notations, ties, accidentals
+  incl. cautionary/parentheses, stem, beam hints ignored, notehead), grace notes,
+  articulations, fermata, ornaments, fingering, lyrics (syllabic/extend), directions
+  (dynamics, wedges, pedal, octave-shift, words, metronome), slurs (numbered), barlines
+  (repeats, endings), measure numbers/implicit pickup, backup/forward (multi-voice),
+  part names → staff names when a part has one staff and the score has several parts.
+  Unknown elements are ignored, never fatal. Voice contents are re-validated with
+  `validateScore`; gaps in a voice are filled with invisible rests.
+- Export is the inverse, producing MusicXML 4.0 partwise with `<divisions>` = LCM of all
+  denominators (capped sensibly), and must round-trip every fixture through
+  import(export(score)) structurally (pitches, durations, voices, ties, tuplets, lyrics,
+  dynamics, slurs).

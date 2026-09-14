@@ -45,6 +45,11 @@ export interface EntryState {
   chordMode: boolean;
   /** True while note-entry mode is active (N toggles). Off = navigation/selection only. */
   active: boolean;
+  /**
+   * Lyric-entry mode: typed characters edit the lyric (verse `verse`) of the event at
+   * `eventId`; Space / "-" / "_" move on to the next note. null = not in lyric mode.
+   */
+  lyric: { eventId: Id; verse: number } | null;
 }
 
 /** Internal clipboard: events per staff, with offsets relative to the copied span's start. */
@@ -112,6 +117,7 @@ export const DEFAULT_ENTRY_STATE: EntryState = {
   referenceStepIndex: 0,
   chordMode: false,
   active: false,
+  lyric: null,
 };
 
 /**
@@ -148,3 +154,19 @@ export type PaletteAction =
   | { kind: "setVoice"; voiceIndex: number };
 
 export type ActionHandler = (state: EditorState, action: PaletteAction) => KeyResult | null;
+
+/** A MIDI note-on from a connected keyboard, already filtered (velocity > 0). */
+export interface MidiNoteOn {
+  /** MIDI note number, 60 = middle C. */
+  note: number;
+  velocity: number;
+  /** MIDI notes currently held BEFORE this one arrived (chord building). */
+  held: number[];
+}
+
+/**
+ * Pure MIDI step-entry handler: spells the pitch from the key signature at the cursor,
+ * writes a new event of the current entry duration when no other key is held, or adds
+ * the pitch to the chord just entered when keys are still held. Null when entry is off.
+ */
+export type MidiHandler = (state: EditorState, ev: MidiNoteOn) => KeyResult | null;

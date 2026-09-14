@@ -155,10 +155,22 @@ export interface EventBase {
 
 export type StemDirection = "up" | "down";
 
+/** One syllable of one verse under a NoteEvent. */
+export interface Lyric {
+  /** 0-based verse number; verse 0 is the top line. */
+  verse: number;
+  text: string;
+  /** Hyphenation: "begin"/"middle" draw a hyphen to the next syllable; "end"/"single" do not. */
+  syllabic: "single" | "begin" | "middle" | "end";
+  /** Melisma: draw an extender line to the next lyric-bearing note. */
+  extend?: boolean;
+}
+
 export interface NoteEvent extends EventBase {
   kind: "note";
   /** One note = single note; many = chord. Keep sorted ascending by pitch. */
   notes: Note[];
+  lyrics?: Lyric[];
   stem?: StemDirection;
   /** Override automatic beaming. "begin"/"continue"/"end" force a group; "none" forces flags. */
   beam?: "auto" | "begin" | "continue" | "end" | "none";

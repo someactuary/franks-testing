@@ -194,6 +194,18 @@ const NoteEventSchema: z.ZodType<import("@/model").NoteEvent> = z.lazy(() =>
       grace: GraceGroupSchema.exactOptional(),
       staff: z.number().exactOptional(),
       notes: z.array(NoteSchema),
+    lyrics: z
+      .array(
+        z
+          .object({
+            verse: z.number().int().nonnegative(),
+            text: z.string(),
+            syllabic: z.enum(["single", "begin", "middle", "end"]),
+            extend: z.boolean().exactOptional(),
+          })
+          .strict(),
+      )
+      .exactOptional(),
       stem: StemDirectionSchema.exactOptional(),
       beam: z.enum(["auto", "begin", "continue", "end", "none"]).exactOptional(),
       articulations: z.array(ArticulationSchema).exactOptional(),
