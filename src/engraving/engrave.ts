@@ -12,6 +12,7 @@ import type { Id } from "@/model/ids";
 import type { KeySignature } from "@/model/pitch";
 import type { BarlineStyle, ClefKind, Part, Score, StaffMeasure } from "@/model/score";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
+import { emitAttachments } from "./attachments";
 import { planSystems, type SystemPlan } from "./breaking";
 import { ENGRAVING } from "./constants";
 import { glyphBox, pathBounds, STAFF_HEIGHT } from "./geometry";
@@ -31,6 +32,7 @@ import {
   type EventLayout,
   type StaffMeasureLayout,
 } from "./semantic";
+import { emitSpanners } from "./spanners";
 import {
   buildMeasureSpacing,
   justifySystem,
@@ -232,10 +234,16 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   // final — and before the vertical extents, which must cover their arcs.
   emitTies(built, { defaults, slots, ties: ties.pairs });
 
-  for (const b of built) {
+  // Attachments and spanners read the primitives above as a skyline and stack
+  // themselves outside it, so they run last and report their own extents.
+  const expressiveCtx = { score, font, defaults, slots };
+  const attachExtents = emitAttachments(built, expressiveCtx);
+  const spannerExtents = emitSpanners(built, expressiveCtx);
+
+  for (const [i, b] of built.entries()) {
     const ext = verticalExtent(b.primitives, font, span);
-    b.above = ext.above;
-    b.below = ext.below;
+    b.above = Math.max(ext.above, attachExtents[i]?.above ?? 0, spannerExtents[i]?.above ?? 0);
+    b.below = Math.max(ext.below, attachExtents[i]?.below ?? 0, spannerExtents[i]?.below ?? 0);
   }
 
   // --- 4. pagination -------------------------------------------------------

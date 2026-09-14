@@ -5,6 +5,7 @@ import { chords } from "./chords";
 import { compound } from "./compound";
 import { minuet } from "./minuet";
 import { ties } from "./ties";
+import { expressive } from "./expressive";
 import type { Score } from "@/model";
 
 export const FIXTURES: Record<string, () => Score> = {
@@ -15,4 +16,5 @@ export const FIXTURES: Record<string, () => Score> = {
   compound,
   minuet,
   ties,
+  expressive,
 };
