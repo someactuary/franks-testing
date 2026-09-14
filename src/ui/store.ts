@@ -10,7 +10,7 @@ import { newPianoScore } from "@/model/factory";
 import type { Score } from "@/model";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { DEFAULT_ENTRY_STATE } from "@/input/types";
-import type { Cursor, EditorState, EntryState, KeyHandler, KeyStroke, Selection } from "@/input/types";
+import type { ClipboardContent, Cursor, EditorState, EntryState, KeyHandler, KeyStroke, Selection } from "@/input/types";
 
 const AUTOSAVE_KEY = "pmn.autosave";
 const AUTOSAVE_DEBOUNCE_MS = 400;
@@ -88,6 +88,7 @@ export class EditorStore {
   private cursor: Cursor;
   private selection: Selection;
   private entry: EntryState;
+  private clipboard: ClipboardContent | null = null;
   private message: string | null = null;
   private readonly listeners = new Set<() => void>();
   private snapshot: EditorSnapshot;
@@ -154,6 +155,7 @@ export class EditorStore {
       cursor: this.cursor,
       selection: this.selection,
       entry: this.entry,
+      clipboard: this.clipboard,
     };
     const result = this.keyHandler(state, stroke);
     if (result === null) return false;
@@ -167,6 +169,7 @@ export class EditorStore {
     this.cursor = nextCursor;
     if (result.selection) this.selection = result.selection;
     if (result.entry) this.entry = result.entry;
+    if (result.clipboard !== undefined) this.clipboard = result.clipboard;
     if (result.message !== undefined) this.message = result.message;
 
     this.emit();

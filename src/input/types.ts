@@ -4,7 +4,7 @@
  */
 import type { Fraction, NoteValue } from "@/model/duration";
 import type { Alter } from "@/model/pitch";
-import type { Id, Score } from "@/model";
+import type { Id, NoteEvent, RestEvent, Score } from "@/model";
 import type { Command } from "@/commands/types";
 
 /** Where the next entered note goes. `offset` is measure-relative, in whole notes. */
@@ -37,11 +37,29 @@ export interface EntryState {
   active: boolean;
 }
 
+/** Internal clipboard: events per staff, with offsets relative to the copied span's start. */
+export interface ClipboardItem {
+  offset: Fraction;
+  /** A deep copy; ids are regenerated on paste. */
+  event: NoteEvent | RestEvent;
+}
+export interface ClipboardStaff {
+  /** Staff index relative to the topmost copied staff (0 = same staff as the paste cursor). */
+  staffOffset: number;
+  items: ClipboardItem[];
+}
+export interface ClipboardContent {
+  staves: ClipboardStaff[];
+  /** Total span from the first onset to the end of the last event (max over staves). */
+  length: Fraction;
+}
+
 export interface EditorState {
   score: Score;
   cursor: Cursor;
   selection: Selection;
   entry: EntryState;
+  clipboard: ClipboardContent | null;
 }
 
 /** Normalized keyboard event, independent of the DOM. */
@@ -64,6 +82,8 @@ export interface KeyResult {
   entry?: EntryState;
   /** "undo" / "redo" are handled by the store, not by commands. */
   history?: "undo" | "redo";
+  /** Replace the internal clipboard (copy/cut). */
+  clipboard?: ClipboardContent | null;
   /** Optional user-facing note for the status bar, e.g. "Note does not fit in measure". */
   message?: string;
 }

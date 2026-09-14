@@ -37,6 +37,7 @@ export function defaultEditorState(score: Score): EditorState {
     cursor: { partIndex: 0, measureIndex: 0, staffIndex: 0, voiceIndex: 0, offset: ZERO },
     selection: { ids: [] },
     entry: { ...DEFAULT_ENTRY_STATE },
+    clipboard: null,
   };
 }
 

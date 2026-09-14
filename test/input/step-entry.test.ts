@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { frac, newPianoScore, note, rest, type Score, type VoiceItem } from "@/model";
 import { History } from "@/commands/history";
 import { defaultEditorState, handleKey } from "@/input/step-entry";
-import type { Cursor, EditorState, EntryState, KeyResult, KeyStroke, Selection } from "@/input/types";
+import type { ClipboardContent, Cursor, EditorState, EntryState, KeyResult, KeyStroke, Selection } from "@/input/types";
 
 /** Narrows a VoiceItem to a RestEvent for assertions. */
 function asRest(item: VoiceItem) {
@@ -19,6 +19,7 @@ class Harness {
   cursor: Cursor;
   selection: Selection;
   entry: EntryState;
+  clipboard: ClipboardContent | null;
 
   constructor(score: Score) {
     const initial = defaultEditorState(score);
@@ -26,10 +27,11 @@ class Harness {
     this.cursor = initial.cursor;
     this.selection = initial.selection;
     this.entry = initial.entry;
+    this.clipboard = initial.clipboard;
   }
 
   private state(): EditorState {
-    return { score: this.history.current, cursor: this.cursor, selection: this.selection, entry: this.entry };
+    return { score: this.history.current, cursor: this.cursor, selection: this.selection, entry: this.entry, clipboard: this.clipboard };
   }
 
   press(partial: Partial<KeyStroke> & { key: string }): KeyResult | null {
@@ -42,6 +44,7 @@ class Harness {
     if (result.cursor) this.cursor = result.cursor;
     if (result.selection) this.selection = result.selection;
     if (result.entry) this.entry = result.entry;
+    if (result.clipboard !== undefined) this.clipboard = result.clipboard;
     return result;
   }
 
