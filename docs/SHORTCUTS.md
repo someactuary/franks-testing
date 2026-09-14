@@ -87,6 +87,26 @@ management (add/remove/rename a staff, bracket) don't have dedicated keys yet �
 they're `PaletteAction`s meant to be triggered from the UI palettes / staves panel,
 which call the same `handleAction` as the keys above.
 
+## Lyrics
+
+| Key | Action |
+|-----|--------|
+| `L` or `⌘L` | Enter lyric mode on the selected note (or the note before the cursor) |
+| `⌘⇧L` | Enter lyric mode on the next verse (current verse + 1, or verse 1 if not already in lyric mode) |
+
+While in lyric mode, every other key is either one of the following or has no
+effect (so typing never accidentally enters notes):
+
+| Key | Action |
+|-----|--------|
+| Any printable character | Append it to the syllable being typed |
+| `Backspace` | Delete the last character (removes the syllable once empty) |
+| `Space` | Commit the syllable and move to the next note in the voice (skips rests, crosses barlines; stays put at the end of the score) |
+| `-` | Commit the syllable with a hyphen (syllabic begin, or middle if continuing a hyphenated word) and move on; the syllable on the note that follows is then marked as ending the word unless it's also followed by `-` |
+| `_` | Mark a melisma extender on the current syllable and move on |
+| `←` / `→` | Move to the previous / next note without editing |
+| `Enter` / `Esc` | Leave lyric mode (the typed text is kept either way) |
+
 ## Navigation
 
 | Key | Action |

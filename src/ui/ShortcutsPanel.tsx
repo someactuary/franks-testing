@@ -43,6 +43,19 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: "Lyrics",
+    rows: [
+      ["L / ⌘L", "Enter lyric mode on the selected note (or the note before the cursor)"],
+      ["⌘⇧L", "Enter lyric mode on the next verse"],
+      ["(lyric mode) type", "Append to the syllable"],
+      ["(lyric mode) Space", "Commit and move to the next note"],
+      ["(lyric mode) -", "Commit with a hyphen and move on"],
+      ["(lyric mode) _", "Mark a melisma extender and move on"],
+      ["(lyric mode) ← / →", "Move between notes without editing"],
+      ["(lyric mode) Enter / Esc", "Leave lyric mode"],
+    ],
+  },
+  {
     title: "Notation",
     rows: [
       ["S", "Slur (first/last selected, or to the next note)"],
