@@ -7,9 +7,10 @@ import type { Ref } from "@/engraving/layout-types";
 import { newPianoScore } from "@/model/factory";
 import type { NoteValue, TimeSignature } from "@/model/duration";
 import type { Score } from "@/model";
-import { findEvent } from "@/model/traverse";
+import { allEvents, findEvent } from "@/model/traverse";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { importMusicXml, exportMusicXml, MusicXmlError } from "@/io/musicxml";
+import { DEFAULT_ENTRY_STATE } from "@/input/types";
 import type { KeyStroke, MidiNoteOn } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
@@ -271,6 +272,29 @@ export function App() {
       delete w.__pmnMidiTest;
     };
   }, [applyMidi]);
+
+  // Dev-only test hook to preview lyric-mode UI: the real L-key handler
+  // (src/input/step-entry.ts) hasn't landed yet, so there's no in-app way to enter
+  // lyric mode. Tags the first note event in the score with a lyric and points
+  // entry.lyric at it, via the same store.setEntry used for App's own state.
+  const { loadScore, setEntry } = editor;
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __pmnDevSetLyric?: (verse: number, text: string) => void };
+    w.__pmnDevSetLyric = (verse: number, text: string) => {
+      const cloned = structuredClone(editor.score) as Score;
+      const firstNote = Array.from(allEvents(cloned)).find((e) => e.positioned.event.kind === "note");
+      if (!firstNote) return;
+      const event = firstNote.positioned.event;
+      if (event.kind !== "note") return;
+      event.lyrics = [{ verse, text, syllabic: "single" }];
+      loadScore(cloned);
+      setEntry({ ...DEFAULT_ENTRY_STATE, active: true, lyric: { eventId: event.id, verse } });
+    };
+    return () => {
+      delete w.__pmnDevSetLyric;
+    };
+  }, [editor.score, loadScore, setEntry]);
 
   const layout = useMemo(() => engrave(editor.score, { font: BRAVURA }), [editor.score]);
 

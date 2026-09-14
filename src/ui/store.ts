@@ -251,6 +251,17 @@ export class EditorStore {
     this.emit();
   };
 
+  /**
+   * Sets the entry state directly, bypassing the KeyHandler — symmetric with
+   * `setCursor`/`setSelection`. Used by App.tsx's DEV-only window hook to preview
+   * lyric-mode status-bar rendering ahead of the real L-key handler
+   * (src/input/step-entry.ts) landing from a parallel work stream.
+   */
+  setEntry = (entry: EntryState): void => {
+    this.entry = entry;
+    this.emit();
+  };
+
   undo = (): void => {
     if (!this.history.undo()) return;
     this.cursor = clampCursor(this.history.current, this.cursor);
@@ -289,6 +300,7 @@ export interface EditorStoreApi extends EditorSnapshot {
   applyMidi: (ev: MidiNoteOn) => boolean;
   setCursor: (cursor: Cursor) => void;
   setSelection: (selection: Selection) => void;
+  setEntry: (entry: EntryState) => void;
   undo: () => void;
   redo: () => void;
   newScore: (opts?: NewScoreOptions) => void;
@@ -313,6 +325,7 @@ export function useEditorStore(
       applyMidi: store.applyMidi,
       setCursor: store.setCursor,
       setSelection: store.setSelection,
+      setEntry: store.setEntry,
       undo: store.undo,
       redo: store.redo,
       newScore: store.newScore,
