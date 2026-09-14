@@ -29,6 +29,7 @@ import {
   type SiteIndex,
   type SystemExtent,
 } from "./attachments";
+import { staffHasLyrics } from "./lyrics";
 import { stemDirectionForSteps, type NoteLayout } from "./semantic";
 import {
   addAbove,
@@ -385,6 +386,14 @@ function emitHairpin(
   for (const piece of pieces) {
     const sk = skylineOf(pass, piece.systemIndex, from.slotIndex);
     if (!sk) continue;
+    // Same vocal convention as the dynamics a hairpin shares its lane with: on a
+    // staff that carries words the hairpin goes above the staff.
+    const sys = pass.systems[piece.systemIndex];
+    const above =
+      spanner.placement === "above" ||
+      (spanner.placement === undefined &&
+        sys !== undefined &&
+        staffHasLyrics(sys, from.slotIndex));
     let x2 = piece.x2;
     if (piece.last) {
       // Stop short of a dynamic sitting at (or just after) the hairpin's end.
@@ -396,7 +405,11 @@ function emitHairpin(
     }
     if (x2 - piece.x1 < ENGRAVING.tieMinLengthSp) continue;
 
-    const centre = dynamicsLaneTop(sk, piece.x1, x2) + EXPRESSIVE.dynamicHeightSp / 2;
+    const centre = above
+      ? clearanceAbove(sk, piece.x1, x2) -
+        EXPRESSIVE.dynamicsClearSp -
+        EXPRESSIVE.dynamicHeightSp / 2
+      : dynamicsLaneTop(sk, piece.x1, x2) + EXPRESSIVE.dynamicHeightSp / 2;
     const half = SPANNER.hairpinOpeningSp / 2;
     // A crescendo opens to the right; a diminuendo opens to the left. A piece
     // that carries neither end of the spanner stays fully open.
@@ -417,7 +430,8 @@ function emitHairpin(
     });
     push(pass, piece.systemIndex, line(y1a, y2a));
     push(pass, piece.systemIndex, line(y1b, y2b));
-    addBelow(sk, piece.x1, x2, centre + half);
+    if (above) addAbove(sk, piece.x1, x2, centre - half);
+    else addBelow(sk, piece.x1, x2, centre + half);
     record(pass.extents[piece.systemIndex]!, centre - half, centre + half);
   }
 }

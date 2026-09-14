@@ -54,8 +54,16 @@ export interface Ink {
  * Roles that belong to the system rather than to one staff: a barline runs from
  * the top staff to the bottom one and a measure number floats above everything,
  * so neither says anything about how far a staff's *music* reaches.
+ *
+ * Lyrics are ignored for a different reason: they own a lane of their own below
+ * everything else (see lyrics.ts), so a slur or hairpin should tuck between the
+ * notes and the words rather than be pushed outside them.
  */
-const IGNORED_ROLES: ReadonlySet<Ref["role"]> = new Set<Ref["role"]>(["barline", "measure"]);
+const IGNORED_ROLES: ReadonlySet<Ref["role"]> = new Set<Ref["role"]>([
+  "barline",
+  "measure",
+  "lyric",
+]);
 
 // ---------------------------------------------------------------------------
 // Queries
