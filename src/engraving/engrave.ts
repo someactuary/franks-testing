@@ -184,7 +184,12 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     }
 
     const ext = verticalExtent(primitives, font, span);
-    return { plan, width, primitives, measures: spacings.map((m) => ({ measureIndex: m.measureIndex, x: m.x, width: m.width })), above: ext.above, below: ext.below };
+    return { plan, width, primitives, measures: spacings.map((m) => ({
+      measureIndex: m.measureIndex,
+      x: m.x,
+      width: m.width,
+      columns: m.columns.map((c) => ({ offset: c.offset, x: m.x + c.x })),
+    })), above: ext.above, below: ext.below };
   });
 
   // --- 4. pagination -------------------------------------------------------

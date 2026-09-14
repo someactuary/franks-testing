@@ -26,7 +26,7 @@ const bassY = 8;
 const trebleStaff: StaffLayout = { partIndex: 0, staffIndex: 0, y: trebleY, lineCount: 5 };
 const bassStaff: StaffLayout = { partIndex: 0, staffIndex: 1, y: bassY, lineCount: 5 };
 
-const measure: MeasureLayout = { measureIndex: 0, x: 0, width: 100 };
+const measure: MeasureLayout = { measureIndex: 0, x: 0, width: 100, columns: [{ offset: { num: 0, den: 1 }, x: 20 }] };
 
 // Two beamed eighth notes on the treble staff (B4 middle line, D5 one step above).
 const note1X = 20;

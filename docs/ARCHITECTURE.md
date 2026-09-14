@@ -58,3 +58,18 @@ Score (src/model)  --engrave-->  LayoutResult (src/engraving)  --render-->  SVG 
 - Run `npm run typecheck && npm test` before reporting. Report: what changed, tests
   added, known gaps.
 - Path alias `@/` = `src/`.
+
+## Editor contracts (M1)
+
+- `src/input/types.ts` defines `Cursor`, `Selection`, `EntryState`, `EditorState`,
+  `KeyStroke`, `KeyResult`, `KeyHandler`. The keystroke handler is a pure function;
+  the React store applies its `commands` through `History`, then its cursor/entry updates.
+- `MeasureLayout.columns` (system-coordinate x per onset) is how the UI places the cursor
+  and hit-tests empty space. Elements are hit-tested via `data-id`/`data-role` on SVG nodes.
+- Note entry semantics (MuseScore-like): the cursor sits at a time offset in one voice.
+  Writing an event of length L at offset T replaces the span [T, T+L) in that voice:
+  events fully inside are removed, an event straddling the span's end is shortened to the
+  remainder and re-expressed as rests (notes are not preserved past a partial overwrite in
+  M1). Writing never crosses the barline: if T+L exceeds the measure, the write is refused
+  with a message. Voice contents always sum exactly to the measure length; a voice with
+  no notes is a single `measureRest`.

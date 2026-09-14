@@ -8,6 +8,7 @@
  * Every primitive may carry `ref` for hit-testing back to model ids.
  */
 import type { Id } from "@/model/ids";
+import type { Fraction } from "@/model/duration";
 
 export interface LayoutResult {
   pages: Page[];
@@ -50,6 +51,13 @@ export interface MeasureLayout {
   measureIndex: number;
   x: number;
   width: number;
+  /**
+   * Every distinct onset in this measure (across all staves), with its x in SYSTEM coordinates.
+   * Sorted by offset. Used by the editor to place the cursor and to hit-test empty space.
+   * An offset that is not a column (e.g. the cursor after the last event) should be
+   * interpolated between neighbours, or placed before the barline at `x + width`.
+   */
+  columns: { offset: Fraction; x: number }[];
 }
 
 export interface Ref {
