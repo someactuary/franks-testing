@@ -211,3 +211,28 @@ describe("basic commands", () => {
     expect(next.attachments).toHaveLength(0);
   });
 });
+
+describe("removeMeasure anchor handling", () => {
+  it("drops event-anchored spanners in the removed measure and shifts later measure anchors and breaks", async () => {
+    const { newPianoScore, note } = await import("@/model");
+    const { removeMeasure } = await import("@/commands/basic");
+    const { produce } = await import("immer");
+    const score = newPianoScore({ measureCount: 3 });
+    const n = note("C4", 1);
+    score.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items = [n];
+    score.spanners.push({
+      kind: "slur", id: "s1", partIndex: 0, staffIndex: 0,
+      start: { kind: "event", eventId: n.id }, end: { kind: "event", eventId: n.id },
+    });
+    score.attachments.push(
+      { kind: "dynamic", id: "d1", partIndex: 0, staffIndex: 0, text: "p", anchor: { kind: "measure", measureIndex: 2, offset: { num: 0, den: 1 } } },
+      { kind: "dynamic", id: "d2", partIndex: 0, staffIndex: 0, text: "f", anchor: { kind: "measure", measureIndex: 0, offset: { num: 0, den: 1 } } },
+    );
+    score.layout.systemBreaks = [1, 2];
+    const next = produce(score, (d) => removeMeasure(1).apply(d));
+    expect(next.measures).toHaveLength(2);
+    expect(next.spanners).toHaveLength(0);
+    expect(next.attachments.map((a) => (a.anchor.kind === "measure" ? a.anchor.measureIndex : -1))).toEqual([1, 0]);
+    expect(next.layout.systemBreaks).toEqual([1]);
+  });
+});

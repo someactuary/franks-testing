@@ -4,7 +4,7 @@
  * and `apply(draft)` performs the edit against an immer draft.
  */
 import { emptyVoice, newId } from "@/model";
-import type { Anchor, MeasureAttributes, NotatedDuration, PartMeasure, Pitch, RestEvent, ScoreMeta } from "@/model";
+import type { Anchor, MeasureAttributes, NotatedDuration, PartMeasure, Pitch, RestEvent, ScoreMeta, VoiceItem } from "@/model";
 import { findEventInVoice, locateEvent, locateNote, type Event } from "./locate";
 import type { Command } from "./types";
 
@@ -147,11 +147,10 @@ export function addMeasures(count: number, atIndex?: number): Command {
   };
 }
 
-function isAnchoredAtMeasure(anchor: Anchor, measureIndex: number): boolean {
-  return anchor.kind === "measure" && anchor.measureIndex === measureIndex;
-}
-
-/** Removes the measure at `index` from every part, and drops any spanner/attachment anchored directly to that measure. */
+/**
+ * Removes the measure at `index` from every part. Drops spanners/attachments anchored to that
+ * measure or to any event inside it, shifts later measure anchors and layout breaks down by one.
+ */
 export function removeMeasure(index: number): Command {
   return {
     label: "Remove measure",
@@ -160,15 +159,50 @@ export function removeMeasure(index: number): Command {
         throw new Error(`removeMeasure: index ${index} out of range`);
       }
 
+      // Collect ids of every event living in the removed measure so anchors to them can be dropped.
+      const removedEventIds = new Set<string>();
+      for (const part of draft.parts) {
+        const pm = part.measures[index];
+        if (!pm) continue;
+        for (const sm of pm.staves) {
+          for (const voice of sm.voices) {
+            const walk = (items: VoiceItem[]): void => {
+              for (const item of items) {
+                if (item.kind === "tuplet") walk(item.items);
+                else {
+                  removedEventIds.add(item.id);
+                  if (item.grace) for (const g of item.grace.events) removedEventIds.add(g.id);
+                }
+              }
+            };
+            walk(voice.items);
+          }
+        }
+      }
+
       draft.measures.splice(index, 1);
       for (const part of draft.parts) {
         part.measures.splice(index, 1);
       }
 
-      draft.spanners = draft.spanners.filter(
-        (s) => !(isAnchoredAtMeasure(s.start, index) || isAnchoredAtMeasure(s.end, index)),
-      );
-      draft.attachments = draft.attachments.filter((a) => !isAnchoredAtMeasure(a.anchor, index));
+      const gone = (a: Anchor): boolean =>
+        a.kind === "event" ? removedEventIds.has(a.eventId) : a.measureIndex === index;
+      const shift = (a: Anchor): void => {
+        if (a.kind === "measure" && a.measureIndex > index) a.measureIndex -= 1;
+      };
+
+      draft.spanners = draft.spanners.filter((s) => !(gone(s.start) || gone(s.end)));
+      draft.attachments = draft.attachments.filter((a) => !gone(a.anchor));
+      for (const s of draft.spanners) {
+        shift(s.start);
+        shift(s.end);
+      }
+      for (const a of draft.attachments) shift(a.anchor);
+
+      const breaks = (xs: number[]): number[] =>
+        xs.filter((m) => m !== index).map((m) => (m > index ? m - 1 : m));
+      draft.layout.systemBreaks = breaks(draft.layout.systemBreaks);
+      draft.layout.pageBreaks = breaks(draft.layout.pageBreaks);
     },
   };
 }
