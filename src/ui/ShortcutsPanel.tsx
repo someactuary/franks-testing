@@ -10,8 +10,8 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: "Durations (entry on)",
     rows: [
-      ["7 / 6 / 5", "Whole / half / quarter"],
-      ["4 / 3 / 2 / 1", "Eighth / 16th / 32nd / 64th"],
+      ["1 / 2 / 4", "Whole / half / quarter"],
+      ["8 / 6 / 3", "Eighth / 16th / 32nd"],
       [".", "Toggle dot (Alt+. double dot)"],
     ],
   },

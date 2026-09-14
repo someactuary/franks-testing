@@ -41,8 +41,11 @@ export function defaultEditorState(score: Score): EditorState {
   };
 }
 
-/** Digit -> notated base value, per the M1 key bindings (1 = 64th ... 7 = whole). */
-const DURATION_DIGITS: Record<string, NoteValue> = { "1": 64, "2": 32, "3": 16, "4": 8, "5": 4, "6": 2, "7": 1 };
+/**
+ * Digit -> notated base value, Noteflight-style: 1 whole, 2 half, 4 quarter, 8 eighth,
+ * 6 sixteenth, 3 thirty-second. 5, 7, 9 are unused (not in this map; the digit is ignored).
+ */
+const DURATION_DIGITS: Record<string, NoteValue> = { "1": 1, "2": 2, "4": 4, "8": 8, "6": 16, "3": 32 };
 
 /**
  * Among referenceOctave-1/+0/+1, the octave that puts `step` diatonically closest to

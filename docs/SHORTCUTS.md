@@ -12,16 +12,19 @@ shows the current measure, staff, duration, and whether note entry is ON or OFF.
 
 ## Durations (note entry on)
 
+Noteflight-style digit mapping:
+
 | Key | Duration |
 |-----|----------|
-| `7` | Whole |
-| `6` | Half |
-| `5` | Quarter |
-| `4` | Eighth |
-| `3` | Sixteenth |
-| `2` | Thirty-second |
-| `1` | Sixty-fourth |
+| `1` | Whole |
+| `2` | Half |
+| `4` | Quarter |
+| `8` | Eighth |
+| `6` | Sixteenth |
+| `3` | Thirty-second |
 | `.` | Toggle dot (`Alt+.` double dot) |
+
+(`5`, `7`, `9` are unused.)
 
 ## Pitches and rests (note entry on)
 

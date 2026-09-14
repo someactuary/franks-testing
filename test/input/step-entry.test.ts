@@ -58,7 +58,7 @@ describe("handleKey: note entry", () => {
     const h = new Harness(newPianoScore({ measureCount: 2 }));
     h.press({ key: "n" });
     expect(h.entry.active).toBe(true);
-    h.press({ key: "5" }); // quarter
+    h.press({ key: "4" }); // quarter
     h.press({ key: "c" });
     h.press({ key: "d" });
     h.press({ key: "e" });
@@ -78,12 +78,12 @@ describe("handleKey: note entry", () => {
   it('"n 4 c", "6 d", "6 e" refuses the third write (doesn\'t fit the measure) with a message, leaving the score untouched', () => {
     const h = new Harness(newPianoScore({ measureCount: 1 })); // 4/4
     h.press({ key: "n" });
-    h.press({ key: "4" }); // eighth
+    h.press({ key: "8" }); // eighth
     h.press({ key: "c" }); // 1/8 used; writing into the sole measureRest immediately re-expresses
     // the remaining 7/8 as rests (half + quarter + eighth: 7/8 has no single-dot form)
-    h.press({ key: "6" }); // half
+    h.press({ key: "2" }); // half
     h.press({ key: "d" }); // overwrites the half-rest piece exactly: 1/8 + 1/2 = 5/8 used
-    h.press({ key: "6" }); // half again
+    h.press({ key: "2" }); // half again
     const result = h.press({ key: "e" }); // would bring it to 9/8: refused
 
     expect(result?.commands).toEqual([]);
@@ -95,7 +95,7 @@ describe("handleKey: note entry", () => {
   it("nearest-octave rule: from a C4 reference, typing g lands on G3 (distance 3 beats G4's distance 4)", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" }); // reference is now C4
     h.press({ key: "g" });
 
@@ -109,7 +109,7 @@ describe("handleKey: note entry", () => {
   it("nearest-octave rule: from a C4 reference, typing b lands on B3", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
     h.press({ key: "b" });
 
@@ -121,7 +121,7 @@ describe("handleKey: note entry", () => {
   it("Shift+letter adds a note to the chord before the cursor without moving the cursor", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
     const cursorBefore = h.cursor;
 
@@ -147,7 +147,7 @@ describe("handleKey: note entry", () => {
   it('"0" enters a rest of the current duration and advances the cursor', () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" }); // quarter
+    h.press({ key: "4" }); // quarter
     h.press({ key: "c" }); // quarter C4 at offset 0; cursor -> 1/4
     h.press({ key: "0" }); // quarter rest at offset 1/4; cursor -> 1/2
 
@@ -162,7 +162,7 @@ describe("handleKey: note entry", () => {
   it('"0" in an otherwise-empty measure still normalizes back to a single measureRest (an all-rest voice always collapses)', () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "0" }); // quarter rest at offset 0; the other 3/4 is also rests
 
     expect(h.cursor.offset).toEqual(frac(1, 4));
@@ -193,7 +193,7 @@ describe("handleKey: note entry", () => {
     const score = newPianoScore({ measureCount: 1, keySig: { fifths: 2, mode: "major" } }); // D major: F#, C#
     const h = new Harness(score);
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "f" });
 
     const ev = h.voiceItems(0)[0]!;
@@ -204,7 +204,7 @@ describe("handleKey: note entry", () => {
   it('"+" sets a pending sharp for the next letter and is cleared after use; with a note selected it applies immediately', () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "+" });
     expect(h.entry.alter).toBe(1);
 
@@ -227,7 +227,7 @@ describe("handleKey: erase", () => {
   it("Backspace erases the note before the cursor to a rest, and normalizes an all-rest measure to a measureRest", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
     expect(h.cursor.offset).toEqual(frac(1, 4));
 
@@ -259,7 +259,7 @@ describe("handleKey: ties and transposition", () => {
   it('"t" toggles a tie on the note before the cursor', () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
 
     h.press({ key: "t" });
@@ -276,7 +276,7 @@ describe("handleKey: ties and transposition", () => {
   it("ArrowUp/ArrowDown transpose the note before the cursor by a semitone, Shift by an octave", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
 
     h.press({ key: "ArrowUp" });
@@ -333,7 +333,7 @@ describe("handleKey: cursor navigation", () => {
   it("Escape turns off entry mode and clears the selection", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
     expect(h.selection.ids).toHaveLength(1);
 
@@ -348,7 +348,7 @@ describe("handleKey: undo/redo", () => {
   it("mod+z undoes and mod+shift+Z redoes the last write", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     h.press({ key: "n" });
-    h.press({ key: "5" });
+    h.press({ key: "4" });
     h.press({ key: "c" });
     expect(h.voiceItems(0)[0]!.kind).toBe("note");
 
@@ -366,7 +366,7 @@ describe("handleKey: unhandled keys", () => {
   it("returns null for a letter outside a-g, and for keys with no effect when entry is inactive", () => {
     const h = new Harness(newPianoScore({ measureCount: 1 }));
     expect(h.press({ key: "z" })).toBeNull(); // no mod: not undo, not in a-g
-    expect(h.press({ key: "5" })).toBeNull(); // entry not active: digit is unhandled
+    expect(h.press({ key: "4" })).toBeNull(); // entry not active: digit is unhandled
     expect(h.press({ key: "c" })).toBeNull(); // entry not active: letter is unhandled
   });
 });
