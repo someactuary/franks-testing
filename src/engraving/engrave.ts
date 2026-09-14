@@ -4,13 +4,13 @@
  * Pipeline: semantic pass (semantic.ts) → horizontal spacing (spacing.ts) →
  * line breaking (breaking.ts) → vertical layout (vertical.ts) → primitives.
  *
- * M0 scope: one voice per staff, no tuplets, spanners, attachments, grace notes
- * or cross-staff notes.
+ * M2 scope: several voices per staff, tuplets, staff groups and staff names.
+ * Still missing: spanners, attachments, grace notes, cross-staff notes.
  */
 import { fracToString, measureLength as timeSigLength, type Fraction, type TimeSignature } from "@/model/duration";
 import type { Id } from "@/model/ids";
 import type { KeySignature } from "@/model/pitch";
-import type { BarlineStyle, ClefKind, Part, Score, StaffMeasure } from "@/model/score";
+import type { BarlineStyle, ClefKind, Part, Score, StaffGroupSymbol, StaffMeasure } from "@/model/score";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
 import { planSystems, type SystemPlan } from "./breaking";
 import { ENGRAVING } from "./constants";
@@ -39,6 +39,7 @@ import {
   type MeasureSpacing,
   type SpacingColumn,
 } from "./spacing";
+import { emitTuplets } from "./tuplets";
 import {
   needsTieContinuationLead,
   resolveTies,
@@ -199,7 +200,14 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     const width = spacings.reduce((a, m) => a + m.width, 0);
 
     const primitives: Primitive[] = [];
-    emitSystemFrame(primitives, score.parts, slots, width, font, spacings[0]?.measureId ?? score.id);
+    emitSystemFrame(primitives, {
+      parts: score.parts,
+      slots,
+      width,
+      font,
+      systemIndex,
+      firstMeasureId: spacings[0]?.measureId ?? score.id,
+    });
     for (const [i, m] of spacings.entries()) {
       const p = prepared[plan.measures[i]!]!;
       emitMeasure(primitives, {
@@ -291,23 +299,75 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
 
 const BRACE_NATURAL_HEIGHT = 4.0;
 
-function systemIndent(parts: Part[], span: number, font: SmuflFontData): number {
-  if (!parts.some((p) => p.staves.length > 1)) return 0;
-  const box = glyphBox(font, "brace");
-  const natural = box.up > 0 ? box.up : BRACE_NATURAL_HEIGHT;
-  const scale = span / natural;
-  return box.width * scale + ENGRAVING.braceGapSp;
+/** The symbol joining a part's staves: an explicit choice, else a brace for 2+ staves. */
+function groupSymbolOf(part: Part): StaffGroupSymbol {
+  return part.bracket ?? (part.staves.length > 1 ? "brace" : "none");
 }
 
-function emitSystemFrame(
-  out: Primitive[],
-  parts: Part[],
-  slots: StaffSlot[],
-  width: number,
-  font: SmuflFontData,
-  firstMeasureId: Id,
-): void {
+/** Width the group symbol of a part takes left of the system, its gap included. */
+function groupSymbolWidth(part: Part, span: number, font: SmuflFontData): number {
+  switch (groupSymbolOf(part)) {
+    case "brace": {
+      const box = glyphBox(font, "brace");
+      const natural = box.up > 0 ? box.up : BRACE_NATURAL_HEIGHT;
+      return box.width * (span / natural) + ENGRAVING.braceGapSp;
+    }
+    case "bracket":
+      return glyphBox(font, "bracketTop").width + ENGRAVING.braceGapSp;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Estimated width of a text run. The engraver has no metrics for the text fonts,
+ * so staff labels — the only text the layout has to reserve room for — use an
+ * average advance. Over-estimating only widens the indent a little.
+ */
+function textWidth(text: string, size: number): number {
+  return text.length * size * ENGRAVING.textWidthRatio;
+}
+
+/** Widest staff label of a part (names and abbreviations both, so the indent is stable). */
+function staffLabelWidth(part: Part): number {
+  let w = 0;
+  for (const staff of part.staves) {
+    for (const label of [staff.name, staff.abbreviation]) {
+      if (label) w = Math.max(w, textWidth(label, ENGRAVING.staffNameSizeSp));
+    }
+  }
+  return w;
+}
+
+/**
+ * Space reserved left of every system: the widest staff label, a gap, and the
+ * part's group symbol. One indent is used for all systems so that measures break
+ * the same way whether a system shows names or abbreviations.
+ */
+function systemIndent(parts: Part[], span: number, font: SmuflFontData): number {
+  let indent = 0;
+  for (const part of parts) {
+    const label = staffLabelWidth(part);
+    const symbol = groupSymbolWidth(part, span, font);
+    indent = Math.max(indent, symbol + (label > 0 ? label + ENGRAVING.staffNameGapSp : 0));
+  }
+  return indent;
+}
+
+interface SystemFrameInput {
+  parts: Part[];
+  slots: StaffSlot[];
+  width: number;
+  font: SmuflFontData;
+  /** Staff names are drawn on system 0, abbreviations after it. */
+  systemIndex: number;
+  firstMeasureId: Id;
+}
+
+function emitSystemFrame(out: Primitive[], input: SystemFrameInput): void {
+  const { parts, slots, width, font, systemIndex } = input;
   const defaults = font.engravingDefaults;
+  const span = staffSpan(slots);
   for (const slot of slots) {
     out.push({
       type: "staffLines",
@@ -324,7 +384,10 @@ function emitSystemFrame(
     if (mine.length === 0) continue;
     const top = mine[0]!.y;
     const bottom = mine[mine.length - 1]!.y + STAFF_HEIGHT;
-    if (part.staves.length > 1) {
+    const partRef: Ref = { id: part.id, role: "other" };
+    const symbol = groupSymbolOf(part);
+
+    if (symbol === "brace") {
       const box = glyphBox(font, "brace");
       const natural = box.up > 0 ? box.up : BRACE_NATURAL_HEIGHT;
       const scale = (bottom - top) / natural;
@@ -334,9 +397,29 @@ function emitSystemFrame(
         x: -(ENGRAVING.braceGapSp + box.width * scale),
         y: bottom,
         scale,
-        ref: { id: part.id, role: "other" },
+        ref: partRef,
       });
-      // The vertical line that joins the staves of the part at the system start.
+    } else if (symbol === "bracket") {
+      // A thick vertical line the height of the group, capped by the two SMuFL
+      // bracket tips, which curl rightwards from their origin.
+      const box = glyphBox(font, "bracketTop");
+      const x = -(ENGRAVING.braceGapSp + box.width);
+      const thickness = defaults.bracketThickness;
+      out.push({
+        type: "line",
+        x1: x + thickness / 2,
+        y1: top,
+        x2: x + thickness / 2,
+        y2: bottom,
+        thickness,
+        ref: partRef,
+      });
+      out.push({ type: "glyph", glyph: "bracketTop", x, y: top, ref: partRef });
+      out.push({ type: "glyph", glyph: "bracketBottom", x, y: bottom, ref: partRef });
+    }
+
+    // The vertical line that joins the staves of the part at the system start.
+    if (part.staves.length > 1) {
       out.push({
         type: "line",
         x1: 0,
@@ -344,7 +427,27 @@ function emitSystemFrame(
         x2: 0,
         y2: bottom,
         thickness: defaults.thinBarlineThickness,
-        ref: { id: firstMeasureId, role: "barline" },
+        ref: { id: input.firstMeasureId, role: "barline" },
+      });
+    }
+
+    // Staff labels: right-aligned a gap left of the group symbol, vertically
+    // centred on their staff. Names on the first system, abbreviations after.
+    const labelRight = -(groupSymbolWidth(part, span, font) + ENGRAVING.staffNameGapSp);
+    for (const slot of mine) {
+      const def = part.staves[slot.staffIndex];
+      const label = systemIndex === 0 ? def?.name : def?.abbreviation;
+      if (!def || !label) continue;
+      out.push({
+        type: "text",
+        text: label,
+        x: labelRight,
+        y: slot.y + STAFF_HEIGHT / 2 + ENGRAVING.staffNameSizeSp * 0.35,
+        size: ENGRAVING.staffNameSizeSp,
+        // The renderer's plain serif face; there is no dedicated staff-name style.
+        style: "subtitle",
+        anchor: "end",
+        ref: { id: def.id, role: "text" },
       });
     }
   }
@@ -481,6 +584,16 @@ function emitMeasure(out: Primitive[], input: MeasureEmitInput): void {
         stemTip: stemTips.get(ei),
       });
     }
+
+    // Tuplet brackets and numbers need the final stem tips, so they come last.
+    emitTuplets(out, {
+      font,
+      defaults,
+      staff,
+      staffY: sy,
+      xOf: (i) => columnX(staff.events[i]!),
+      stemTips,
+    });
   }
 
   emitBarlines(out, { defaults, slots, spacing, prepared });
@@ -502,6 +615,8 @@ function emitEvent(out: Primitive[], input: EventEmitInput): void {
   const eventRef = (role: Ref["role"]): Ref => ({ id: ev.event.id, role });
 
   if (ev.rest) {
+    // An invisible rest still owns its column; it simply draws no ink.
+    if (ev.rest.invisible) return;
     const x = ev.rest.centred
       ? input.measureX + input.measureWidth / 2 - ev.rest.width / 2
       : input.x;

@@ -55,6 +55,16 @@ export const ENGRAVING = {
   /** Length of a fractional (partial) beam. */
   partialBeamSp: 1.0,
 
+  // --- tuplets ------------------------------------------------------------
+  /** Clearance between the outermost stem tip of a tuplet and its bracket (or number). */
+  tupletBracketGapSp: 0.75,
+  /** Length of the bracket's end hooks, pointing back towards the notes. */
+  tupletHookSp: 0.8,
+  /** Gap between the number and each side of the bracket's break. */
+  tupletNumberGapSp: 0.4,
+  /** Extra clearance per level of tuplet nesting; the innermost sits closest to the notes. */
+  tupletNestStepSp: 2.0,
+
   // --- ties ---------------------------------------------------------------
   /** Horizontal gap between a notehead's edge and the tie endpoint. */
   tieGapSp: 0.22,
@@ -75,8 +85,18 @@ export const ENGRAVING = {
   tieContinuationLeadSp: 1.6,
 
   // --- vertical / page ----------------------------------------------------
-  /** Horizontal gap between the brace and the system's left edge. */
+  /** Horizontal gap between the brace (or bracket) and the system's left edge. */
   braceGapSp: 0.6,
+  /** Font size of a staff name / abbreviation drawn left of the system. */
+  staffNameSizeSp: 1.6,
+  /** Gap between a staff label and the group symbol to its right. */
+  staffNameGapSp: 1.0,
+  /**
+   * Average glyph advance of the staff-label font as a fraction of its size.
+   * The engraver has no metrics for the text fonts, so label widths — which the
+   * system indent depends on — are estimated.
+   */
+  textWidthRatio: 0.5,
   /** Extra allowance above/below each staff when stacking systems. */
   staffOverhangSp: 2.0,
   /** Distance from the top staff line up to the measure-number baseline. */
