@@ -12,10 +12,12 @@
  */
 import { fracToString, toNumber, type Fraction } from "@/model/duration";
 import type { Id } from "@/model/ids";
-import type { Anchor, Articulation, Attachment, Score } from "@/model/score";
+import type { Anchor, Articulation, Attachment, Ornament, Score } from "@/model/score";
 import type { NotatedDuration } from "@/model/duration";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
+import { ENGRAVING } from "./constants";
 import { glyphBox, STAFF_HEIGHT } from "./geometry";
+import { staffHasLyrics } from "./lyrics";
 import type { GlyphPrim, Primitive, Ref, TextPrim } from "./layout-types";
 import { stemDirectionForSteps, type EventLayout } from "./semantic";
 import type { MeasureSpacing } from "./spacing";
@@ -74,6 +76,25 @@ export const EXPRESSIVE = {
   /** Pedal marks and the pedal line. */
   pedalLaneSp: 2.5,
   pedalClearSp: 0.5,
+
+  /** Gap between the ink above the staff and the first ornament. */
+  ornamentGapSp: 0.8,
+  /** Gap between two stacked ornaments. */
+  ornamentStackSp: 0.3,
+
+  /** Gap between an arpeggio wiggle and the chord's leftmost ink. */
+  arpeggioGapSp: 0.45,
+  /** Shortest span an arpeggio is drawn over, however close the chord's notes are. */
+  arpeggioMinSpanSp: 2.0,
+  /** Distance the wiggle reaches past the outer noteheads at each end. */
+  arpeggioOvershootSp: 0.6,
+
+  /** Gap between the edge of a notehead and the tremolo strokes on its stem. */
+  tremoloNoteGapSp: 0.6,
+  /** Gap the strokes keep from the free end of the stem. */
+  tremoloTipGapSp: 0.15,
+  /** Gap between a stemless notehead and its tremolo strokes. */
+  tremoloStemlessGapSp: 0.7,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -308,6 +329,30 @@ const ARTICULATION_GLYPHS: Record<Articulation, { above: string; below: string }
   portato: { above: "articTenutoStaccatoAbove", below: "articTenutoStaccatoBelow" },
 };
 
+/**
+ * SMuFL's ornament names do not line up with the model's: `ornamentMordent` is
+ * the mordent *with* a stroke (the lower mordent) and `ornamentShortTrill` is the
+ * strokeless upper — i.e. inverted — mordent.
+ */
+const ORNAMENT_GLYPHS: Record<Ornament, string> = {
+  trill: "ornamentTrill",
+  mordent: "ornamentMordent",
+  invertedMordent: "ornamentShortTrill",
+  turn: "ornamentTurn",
+  invertedTurn: "ornamentTurnInverted",
+};
+
+/**
+ * Arpeggio wiggles. Bravura's repeatable `wiggleArpeggiato*` segments are not in
+ * the generated font subset, so the legacy single-glyph arpeggios are used and
+ * scaled to the chord's span; `arpeggiatoUp` / `arpeggiatoDown` carry the arrowhead.
+ */
+const ARPEGGIO_GLYPHS: Record<"up" | "down" | "straight", string> = {
+  up: "arpeggiatoUp",
+  down: "arpeggiatoDown",
+  straight: "arpeggiato",
+};
+
 /** Metronome note glyph for a beat unit (dots are drawn separately). */
 export function metronomeGlyph(unit: NotatedDuration): string {
   switch (unit.base) {
@@ -362,7 +407,16 @@ export function emitAttachments(systems: EmitSystem[], ctx: EmitContext): System
         }
         for (const ev of staff.events) {
           const x = pass.index.byEvent.get(ev.event.id)?.x ?? spacing.x + spacing.head;
+          emitOrnaments(pass, systemIndex, sk, ev, x);
+        }
+        for (const ev of staff.events) {
+          const x = pass.index.byEvent.get(ev.event.id)?.x ?? spacing.x + spacing.head;
           emitFingerings(pass, systemIndex, sk, ev, x, slotIndex);
+        }
+        for (const ev of staff.events) {
+          const x = pass.index.byEvent.get(ev.event.id)?.x ?? spacing.x + spacing.head;
+          emitTremolo(pass, systemIndex, sk, ev, x);
+          emitArpeggio(pass, systemIndex, sk, ev, x);
         }
       }
     }
@@ -523,6 +577,151 @@ function emitFingerings(
   }
 }
 
+// --- ornaments -------------------------------------------------------------
+
+/**
+ * Ornaments sit above the staff whatever the stem does — a trill belongs to the
+ * note as a whole, not to one side of it — and outside everything already there,
+ * so a trill over a high note clears its leger lines and its articulation.
+ */
+function emitOrnaments(
+  pass: Pass,
+  systemIndex: number,
+  sk: StaffSkyline,
+  ev: EventLayout,
+  columnX: number,
+): void {
+  const event = ev.event;
+  if (event.kind !== "note") return;
+  const list = event.ornaments ?? [];
+  if (list.length === 0 || ev.notes.length === 0) return;
+
+  const left = columnX + Math.min(...ev.notes.map((n) => n.x));
+  const right = columnX + Math.max(...ev.notes.map((n) => n.x + n.width));
+  const centre = (left + right) / 2;
+  const ext = pass.extents[systemIndex]!;
+
+  // clearanceAbove never reports below the top staff line, so this is already
+  // "above the staff, outside the skyline".
+  let edge = clearanceAbove(sk, left, right) - EXPRESSIVE.ornamentGapSp;
+  for (const ornament of list) {
+    const glyph = ORNAMENT_GLYPHS[ornament];
+    const box = glyphBox(pass.ctx.font, glyph);
+    const x = centre - box.width / 2;
+    const y = edge - box.down;
+    push(pass, systemIndex, {
+      type: "glyph",
+      glyph,
+      x,
+      y,
+      ref: { id: event.id, role: "ornament" },
+    } satisfies GlyphPrim);
+    addAbove(sk, x, x + box.width, y - box.up);
+    record(ext, y - box.up, y + box.down);
+    edge = y - box.up - EXPRESSIVE.ornamentStackSp;
+  }
+}
+
+// --- tremolo ---------------------------------------------------------------
+
+/**
+ * Tremolo strokes: centred across the stem, kept clear of both the notehead and
+ * the stem's free end. A stemless note (a whole note) carries them beside the
+ * notehead, on the side the stem would have been.
+ */
+function emitTremolo(
+  pass: Pass,
+  systemIndex: number,
+  sk: StaffSkyline,
+  ev: EventLayout,
+  columnX: number,
+): void {
+  const event = ev.event;
+  if (event.kind !== "note" || !event.tremolo || ev.notes.length === 0) return;
+  const glyph = `tremolo${event.tremolo}`;
+  const box = glyphBox(pass.ctx.font, glyph);
+  // The tremolo glyphs are drawn about their own centre, both ways.
+  const half = (box.up + box.down) / 2;
+  const ext = pass.extents[systemIndex]!;
+  const ref: Ref = { id: event.id, role: "other" };
+  const staffY = sk.staffY;
+
+  let x: number;
+  let y: number;
+  if (ev.stem) {
+    const attach = staffY + ev.stem.yAttach;
+    const tip = staffY + ev.stem.yTip;
+    const sign = tip > attach ? 1 : -1;
+    const length = Math.abs(tip - attach);
+    // `yAttach` sits on the notehead's centre line, so the gap is measured from
+    // half a space further out — the notehead's own edge.
+    const near = half + 0.5 + EXPRESSIVE.tremoloNoteGapSp;
+    const far = Math.max(near, length - half - EXPRESSIVE.tremoloTipGapSp);
+    x = columnX + ev.stem.x;
+    y = attach + sign * Math.min(Math.max(length / 2, near), far);
+  } else {
+    const dir = stemDirectionForSteps(ev.notes.map((n) => n.step));
+    const outer = dir === "up" ? ev.notes[ev.notes.length - 1]! : ev.notes[0]!;
+    const sign = dir === "up" ? -1 : 1;
+    x = columnX + outer.x + outer.width / 2;
+    y = staffY + outer.y + sign * (0.5 + EXPRESSIVE.tremoloStemlessGapSp + half);
+  }
+
+  push(pass, systemIndex, { type: "glyph", glyph, x, y, ref } satisfies GlyphPrim);
+  addAbove(sk, x + box.left, x + box.right, y - box.up);
+  addBelow(sk, x + box.left, x + box.right, y + box.down);
+  record(ext, y - box.up, y + box.down);
+}
+
+// --- arpeggio --------------------------------------------------------------
+
+/**
+ * The arpeggio wiggle, left of everything the chord owns (accidentals included —
+ * spacing.ts reserved `ENGRAVING.arpeggioLeadSp` there for it), spanning the
+ * chord from its lowest to its highest notehead.
+ *
+ * Bravura's repeatable `wiggleArpeggiato*` segments are outside the generated
+ * font subset, so the single-glyph arpeggios are scaled to the span instead of
+ * being tiled; `arpeggiatoUp` / `arpeggiatoDown` bring their own arrowhead.
+ */
+function emitArpeggio(
+  pass: Pass,
+  systemIndex: number,
+  sk: StaffSkyline,
+  ev: EventLayout,
+  columnX: number,
+): void {
+  const event = ev.event;
+  if (event.kind !== "note" || !event.arpeggio || ev.notes.length === 0) return;
+  const glyph = ARPEGGIO_GLYPHS[event.arpeggio];
+  const box = glyphBox(pass.ctx.font, glyph);
+  const natural = box.up + box.down;
+  if (natural <= 0) return;
+
+  const staffY = sk.staffY;
+  const over = EXPRESSIVE.arpeggioOvershootSp;
+  const top = staffY + ev.notes[ev.notes.length - 1]!.y - over;
+  const bottom = staffY + ev.notes[0]!.y + over;
+  const span = Math.max(bottom - top, EXPRESSIVE.arpeggioMinSpanSp);
+  const scale = span / natural;
+  const width = box.width * scale;
+  const x = columnX - ev.left - EXPRESSIVE.arpeggioGapSp - width;
+  // The glyph's ink runs from `y - up * scale` to `y + down * scale`.
+  const y = bottom - box.down * scale;
+
+  push(pass, systemIndex, {
+    type: "glyph",
+    glyph,
+    x,
+    y,
+    scale,
+    ref: { id: event.id, role: "other" },
+  } satisfies GlyphPrim);
+  addAbove(sk, x, x + width, y - box.up * scale);
+  addBelow(sk, x, x + width, y + box.down * scale);
+  record(pass.extents[systemIndex]!, y - box.up * scale, y + box.down * scale);
+}
+
 // --- score-level attachments ----------------------------------------------
 
 function emitAttachment(pass: Pass, attachment: Attachment): void {
@@ -601,7 +800,14 @@ function emitDynamic(
   const width = dynamicWidth(pass.ctx.font, attachment.text, size);
   const box = dynamicBox(pass.ctx.font, attachment.text, size);
   const x = site.x;
-  const above = attachment.placement === "above";
+  // Vocal convention: on a staff that carries words, the words own everything
+  // below the staff, so the dynamics move above it unless told otherwise.
+  const sys = pass.systems[site.systemIndex];
+  const above =
+    attachment.placement === "above" ||
+    (attachment.placement === undefined &&
+      sys !== undefined &&
+      staffHasLyrics(sys, site.slotIndex));
   const laneTop = above
     ? clearanceAbove(sk, x, x + width) - EXPRESSIVE.dynamicsClearSp - (box.up + box.down)
     : dynamicsLaneTop(sk, x, x + width);

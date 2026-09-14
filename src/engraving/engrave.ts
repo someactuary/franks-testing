@@ -16,6 +16,7 @@ import { emitAttachments } from "./attachments";
 import { planSystems, type SystemPlan } from "./breaking";
 import { ENGRAVING } from "./constants";
 import { glyphBox, pathBounds, STAFF_HEIGHT } from "./geometry";
+import { emitLyrics } from "./lyrics";
 import type {
   LayoutResult,
   MeasureLayout,
@@ -246,12 +247,25 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   // themselves outside it, so they run last and report their own extents.
   const expressiveCtx = { score, font, defaults, slots };
   const attachExtents = emitAttachments(built, expressiveCtx);
+  // Lyrics claim the lane below each staff, outside whatever attachments placed
+  // there, and before the spanners so a slur can still tuck above the words.
+  const lyricExtents = emitLyrics(built, expressiveCtx);
   const spannerExtents = emitSpanners(built, expressiveCtx);
 
   for (const [i, b] of built.entries()) {
     const ext = verticalExtent(b.primitives, font, span);
-    b.above = Math.max(ext.above, attachExtents[i]?.above ?? 0, spannerExtents[i]?.above ?? 0);
-    b.below = Math.max(ext.below, attachExtents[i]?.below ?? 0, spannerExtents[i]?.below ?? 0);
+    b.above = Math.max(
+      ext.above,
+      attachExtents[i]?.above ?? 0,
+      lyricExtents[i]?.above ?? 0,
+      spannerExtents[i]?.above ?? 0,
+    );
+    b.below = Math.max(
+      ext.below,
+      attachExtents[i]?.below ?? 0,
+      lyricExtents[i]?.below ?? 0,
+      spannerExtents[i]?.below ?? 0,
+    );
   }
 
   // --- 4. pagination -------------------------------------------------------
@@ -452,8 +466,7 @@ function emitSystemFrame(out: Primitive[], input: SystemFrameInput): void {
         x: labelRight,
         y: slot.y + STAFF_HEIGHT / 2 + ENGRAVING.staffNameSizeSp * 0.35,
         size: ENGRAVING.staffNameSizeSp,
-        // The renderer's plain serif face; there is no dedicated staff-name style.
-        style: "subtitle",
+        style: "staffName",
         anchor: "end",
         ref: { id: def.id, role: "text" },
       });

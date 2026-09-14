@@ -16,6 +16,7 @@ import type { KeySignature } from "@/model/pitch";
 import type { BarlineStyle, ClefKind } from "@/model/score";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
 import { ENGRAVING } from "./constants";
+import { eventLyricWidth } from "./lyrics";
 import {
   clefGlyph,
   clefGlyphStep,
@@ -188,6 +189,12 @@ export interface SpacingColumn {
   left: number;
   /** Ink extent right of the column origin (>= 0). */
   right: number;
+  /**
+   * Horizontal room the widest syllable sung at this onset needs, centred on the
+   * column. 0 when nothing here is sung. See lyrics.ts: a long word must push
+   * the column after it to the right rather than collide with its neighbour.
+   */
+  lyricWidth: number;
   /** Measure-local x, filled in by `assignMeasureColumns`. */
   x: number;
 }
@@ -210,8 +217,14 @@ export function buildColumns(staves: StaffMeasureLayout[]): SpacingColumn[] {
       const key = fracToString(ev.offset);
       const existing = byOffset.get(key);
       // A centred whole-measure rest does not constrain its column's extents.
-      const left = ev.rest?.centred ? 0 : ev.left;
-      const right = ev.rest?.centred ? 0 : ev.right;
+      const centred = ev.rest?.centred ?? false;
+      // An arpeggio is drawn left of the chord's accidentals, outside the ink
+      // the semantic pass measured, so the column has to reserve room for it.
+      const arpeggio =
+        ev.event.kind === "note" && ev.event.arpeggio ? ENGRAVING.arpeggioLeadSp : 0;
+      const left = centred ? 0 : ev.left + arpeggio;
+      const right = centred ? 0 : ev.right;
+      const lyricWidth = centred ? 0 : eventLyricWidth(ev);
       if (!existing) {
         byOffset.set(key, {
           offset: ev.offset,
@@ -219,12 +232,14 @@ export function buildColumns(staves: StaffMeasureLayout[]): SpacingColumn[] {
           ideal: 0,
           left,
           right,
+          lyricWidth,
           x: 0,
         });
       } else {
         if (lt(ev.length, existing.shortest)) existing.shortest = ev.length;
         existing.left = Math.max(existing.left, left);
         existing.right = Math.max(existing.right, right);
+        existing.lyricWidth = Math.max(existing.lyricWidth, lyricWidth);
       }
     }
   }
@@ -292,10 +307,12 @@ export function buildMeasureSpacing(args: {
   const bw = barlineWidth(args.barline, args.defaults);
   const lead = ENGRAVING.measureLeadSp + (args.extraLead ?? 0);
 
+  // A syllable is centred on its column, so half of it hangs off each side; the
+  // padding that keeps two syllables apart is already inside `lyricWidth`.
   const head =
     columns.length === 0
       ? args.prefix.width + lead
-      : args.prefix.width + lead + columns[0]!.left;
+      : args.prefix.width + lead + Math.max(columns[0]!.left, columns[0]!.lyricWidth / 2);
 
   const advances: number[] = [];
   const weights: number[] = [];
@@ -303,8 +320,11 @@ export function buildMeasureSpacing(args: {
     const c = columns[i]!;
     const next = columns[i + 1];
     const min = next
-      ? c.right + ENGRAVING.minColumnGapSp + next.left
-      : c.right + ENGRAVING.barlineLeadSp;
+      ? Math.max(
+          c.right + ENGRAVING.minColumnGapSp + next.left,
+          (c.lyricWidth + next.lyricWidth) / 2,
+        )
+      : Math.max(c.right + ENGRAVING.barlineLeadSp, c.lyricWidth / 2);
     advances.push(Math.max(c.ideal, min));
     weights.push(c.ideal);
   }

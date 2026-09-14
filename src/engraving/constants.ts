@@ -40,6 +40,11 @@ export const ENGRAVING = {
   accidentalColumnGapSp: 0.12,
   /** Vertical clearance required between two accidentals in the same column. */
   accidentalClearanceSp: 0.1,
+  /**
+   * Room reserved left of an arpeggiated chord's ink (accidentals included) for
+   * the arpeggio wiggle, which attachments.ts draws outside the column's own ink.
+   */
+  arpeggioLeadSp: 1.1,
   /** Gap between the rightmost notehead of a chord and its first augmentation dot. */
   dotGapSp: 0.35,
   /** Gap between successive augmentation dots. */
