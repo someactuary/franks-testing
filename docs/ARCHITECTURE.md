@@ -186,3 +186,10 @@ turns them into a `KeyResult`; the store applies it exactly like a keystroke.
   denominators (capped sensibly), and must round-trip every fixture through
   import(export(score)) structurally (pitches, durations, voices, ties, tuplets, lyrics,
   dynamics, slurs).
+
+### MusicXML schema check
+`npx tsx scripts/export-musicxml.ts <dir>` exports every fixture and re-exports the corpus.
+Validate with the W3C schema (github.com/w3c/musicxml, `schema/musicxml.xsd` plus
+`xlink.xsd` and `xml.xsd`, imports pointed at the local copies):
+`xmllint --noout --schema musicxml.xsd <dir>/*.musicxml`. As of 2026-09-14 all 16 exports
+and the 3 corpus files validate. Not yet opened in MuseScore (not installed here).
