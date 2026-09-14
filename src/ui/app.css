@@ -1,0 +1,73 @@
+/* Screen-only chrome for the app shell. Print overrides live in print.css. */
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background: #6b6f76;
+  font-family: system-ui, sans-serif;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: #24262b;
+  color: #fff;
+}
+
+.toolbar-title {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.toolbar button {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid #888;
+  border-radius: 4px;
+  background: #3a3d44;
+  color: #fff;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: #4a4e57;
+}
+
+.page-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 0 48px;
+}
+
+.page-shadow {
+  background: #fff;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  line-height: 0;
+}
+
+.page {
+  line-height: 0;
+}
+
+.page svg {
+  display: block;
+}
