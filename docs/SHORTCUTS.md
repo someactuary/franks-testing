@@ -129,7 +129,9 @@ effect (so typing never accidentally enters notes):
 
 ## Not yet implemented
 
-MIDI input. Mouse dragging of notes (`dragPitch`) and the UI palettes/staves panel
-that would trigger dynamics/articulations/ottava/fermata/tempo/text/fingering/staff
-actions from a click are `PaletteAction`s already wired up in `src/input/actions.ts`,
-but need `src/ui` to expose them. See PLAN.md milestones M2–M4.
+MIDI input is implemented in `src/input/midi-entry.ts` (`handleMidiNote`), but not
+yet wired to a Web MIDI device by `src/ui`. Mouse dragging of notes (`dragPitch`) and
+the UI palettes/staves panel that would trigger dynamics/articulations/ottava/
+fermata/tempo/text/fingering/staff actions from a click are `PaletteAction`s already
+wired up in `src/input/actions.ts`, but need `src/ui` to expose them. See PLAN.md
+milestones M2–M4.
