@@ -559,7 +559,7 @@ function collectDirections(score: Score, index: Map<Id, EventLoc>, out: Directio
               w,
               staff,
               off,
-              a.placement ?? "above",
+              a.placement,
               () => {
                 if (a.text !== undefined) {
                   wrap(w, () => w.leaf("words", a.text!, { "font-weight": "bold" }));
@@ -680,6 +680,12 @@ function writeMeasure(w: XmlWriter, ctx: MeasureCtx): void {
 
   writeAttributes(w, ctx);
   writeLeftBarline(w, ma);
+  if (ma?.rehearsalMark && ctx.xmlPartIndex === 0) {
+    w.open("direction", { placement: "above" });
+    wrap(w, () => w.leaf("rehearsal", ma.rehearsalMark!));
+    w.leaf("staff", 1);
+    w.close("direction");
+  }
 
   let firstStream = true;
   for (const [localStaff, ref] of xmlPart.staves.entries()) {
