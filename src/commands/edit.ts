@@ -4,9 +4,11 @@
  * "Editor contracts (M1)" section for the exact span-replace semantics implemented
  * here by `writeEvent`.
  */
+import type { Draft } from "immer";
 import { newId } from "@/model";
 import {
   add,
+  eq,
   fracToString,
   lt,
   measureLength as timeSigMeasureLength,
@@ -14,6 +16,7 @@ import {
   sub,
   ZERO,
   type Fraction,
+  type NotatedDuration,
   type TimeSignature,
 } from "@/model/duration";
 import { itemLength, positionedEvents } from "@/model/traverse";
@@ -156,47 +159,191 @@ export function writeEvent(cursor: Cursor, event: NoteEvent | RestEvent): Comman
       const len = notatedToFraction(event.duration);
       const refusal = canWrite(draft, cursor, len);
       if (refusal) throw new WriteRefused(refusal);
-
-      const part = draft.parts[cursor.partIndex]!;
-      const pm = part.measures[cursor.measureIndex]!;
-      const sm = pm.staves[cursor.staffIndex]!;
-      const voice = sm.voices[cursor.voiceIndex]!;
-
-      const spanStart = cursor.offset;
-      const spanEnd = add(spanStart, len);
-
-      const positions = isSoleMeasureRest(voice)
-        ? [{ item: voice.items[0]!, offset: ZERO, length: measureLengthAt(draft, cursor.measureIndex) }]
-        : topLevelPositions(voice.items);
-
-      const out: VoiceItem[] = [];
-      let insertedNew = false;
-      for (const { item, offset, length } of positions) {
-        const end = add(offset, length);
-        const overlaps = lt(offset, spanEnd) && lt(spanStart, end);
-        if (!overlaps) {
-          out.push(item);
-          continue;
-        }
-        // Guarded by canWrite: an overlapping item here is never a tuplet.
-        const ev = item as Event;
-        if (lt(offset, spanStart)) {
-          out.push(...prefixPieces(ev, sub(spanStart, offset)));
-        }
-        if (!insertedNew) {
-          out.push({ ...event });
-          insertedNew = true;
-        }
-        if (lt(spanEnd, end)) {
-          out.push(...restsFor(sub(end, spanEnd)));
-        }
-      }
-      if (!insertedNew) out.push({ ...event });
-
-      voice.items = out;
-      normalizeVoice(voice);
+      writeSpan(draft, cursor, len, [{ ...event }]);
     },
   };
+}
+
+/**
+ * Core span-replace: in the voice addressed by `cursor`, replaces [cursor.offset,
+ * cursor.offset + spanLen) with `newItems`. Shared by `writeEvent` (single item) and
+ * `writeSequence` (one call per measure-bounded chunk of a split event). Callers are
+ * responsible for checking `canWrite` first (this never refuses).
+ */
+function writeSpan(draft: Draft<Score>, cursor: Cursor, spanLen: Fraction, newItems: VoiceItem[]): void {
+  const part = draft.parts[cursor.partIndex]!;
+  const pm = part.measures[cursor.measureIndex]!;
+  const sm = pm.staves[cursor.staffIndex]!;
+  const voice = sm.voices[cursor.voiceIndex]!;
+
+  const spanStart = cursor.offset;
+  const spanEnd = add(spanStart, spanLen);
+
+  const positions = isSoleMeasureRest(voice)
+    ? [{ item: voice.items[0]!, offset: ZERO, length: measureLengthAt(draft, cursor.measureIndex) }]
+    : topLevelPositions(voice.items);
+
+  const out: VoiceItem[] = [];
+  let insertedNew = false;
+  for (const { item, offset, length } of positions) {
+    const end = add(offset, length);
+    const overlaps = lt(offset, spanEnd) && lt(spanStart, end);
+    if (!overlaps) {
+      out.push(item);
+      continue;
+    }
+    // Guarded by canWrite (called by every caller before writeSpan): an overlapping
+    // item here is never a tuplet.
+    const ev = item as Event;
+    if (lt(offset, spanStart)) {
+      out.push(...prefixPieces(ev, sub(spanStart, offset)));
+    }
+    if (!insertedNew) {
+      out.push(...newItems);
+      insertedNew = true;
+    }
+    if (lt(spanEnd, end)) {
+      out.push(...restsFor(sub(end, spanEnd)));
+    }
+  }
+  if (!insertedNew) out.push(...newItems);
+
+  voice.items = out;
+  normalizeVoice(voice);
+}
+
+/** Ensures the score has at least `measureIndex + 1` measures, appending empty ones (same logic as `addMeasures`, so the final barline follows) as needed. */
+function ensureMeasureExists(draft: Draft<Score>, measureIndex: number): void {
+  while (draft.measures.length <= measureIndex) {
+    addMeasures(1).apply(draft);
+  }
+}
+
+/** One piece of a (possibly split) note or rest: which measure/offset it lands at, and its notated length. */
+interface WriteSlot {
+  measureIndex: number;
+  offset: Fraction;
+  duration: NotatedDuration;
+}
+
+/** A copy of `base` (a rest) re-expressed with `duration`, given a fresh id unless `keepId`. Never a measure-rest. */
+function pieceForRest(base: RestEvent, duration: NotatedDuration, keepId: boolean): RestEvent {
+  const piece: RestEvent = { ...base, id: keepId ? base.id : newId(), duration };
+  delete piece.measureRest;
+  if (!keepId) delete piece.grace;
+  return piece;
+}
+
+/** A copy of `base` (a note/chord) re-expressed with `duration`, same pitches, given fresh ids unless `keepId`. `forceTie` sets tieStart on every note regardless of the original (used for every piece but the last of a split). */
+function pieceForNote(base: NoteEvent, duration: NotatedDuration, keepId: boolean, forceTie: boolean): NoteEvent {
+  const notes: Note[] = base.notes.map((n) => {
+    const note: Note = { ...n, id: keepId ? n.id : newId() };
+    if (forceTie) note.tieStart = true;
+    return note;
+  });
+  const piece: NoteEvent = { ...base, id: keepId ? base.id : newId(), duration, notes };
+  if (!keepId) delete piece.grace;
+  return piece;
+}
+
+/**
+ * Writes `events` back to back starting at `cursor`, splitting any event that doesn't
+ * fit in the remaining part of its measure: the fitting part is written and the
+ * remainder continues into the next measure (and the next, as many times as needed).
+ * A split note is re-expressed as several notated pieces (via `decomposeDuration`),
+ * tied together (`tieStart` on every piece but the last; same pitches; fresh ids on
+ * every piece but the first). A split rest is just split into plain rests. Measures
+ * are appended as needed (see `ensureMeasureExists`), so this never refuses on
+ * overflow — only (like `writeEvent`) if the span would touch an existing tuplet.
+ */
+export function writeSequence(cursor: Cursor, events: readonly (NoteEvent | RestEvent)[]): Command {
+  return {
+    label: "Write sequence",
+    apply(draft) {
+      let measureIndex = cursor.measureIndex;
+      let offset = cursor.offset;
+
+      for (const event of events) {
+        let remaining = notatedToFraction(event.duration);
+        const chunks: { measureIndex: number; offset: Fraction; len: Fraction }[] = [];
+
+        while (!eq(remaining, ZERO)) {
+          ensureMeasureExists(draft, measureIndex);
+          const measureLen = measureLengthAt(draft, measureIndex);
+          const available = sub(measureLen, offset);
+          const chunkLen = lt(available, remaining) ? available : remaining;
+          chunks.push({ measureIndex, offset, len: chunkLen });
+          remaining = sub(remaining, chunkLen);
+          offset = add(offset, chunkLen);
+          if (eq(offset, measureLen)) {
+            measureIndex += 1;
+            offset = ZERO;
+          }
+        }
+
+        const slots: WriteSlot[] = [];
+        for (const chunk of chunks) {
+          let pieceOffset = chunk.offset;
+          for (const duration of decomposeDuration(chunk.len)) {
+            slots.push({ measureIndex: chunk.measureIndex, offset: pieceOffset, duration });
+            pieceOffset = add(pieceOffset, notatedToFraction(duration));
+          }
+        }
+
+        slots.forEach((slot, i) => {
+          const isFirst = i === 0;
+          const isLast = i === slots.length - 1;
+          const piece: NoteEvent | RestEvent =
+            event.kind === "rest"
+              ? pieceForRest(event, slot.duration, isFirst)
+              : pieceForNote(event, slot.duration, isFirst, !isLast);
+
+          const slotCursor: Cursor = { ...cursor, measureIndex: slot.measureIndex, offset: slot.offset };
+          const slotLen = notatedToFraction(slot.duration);
+          const refusal = canWrite(draft, slotCursor, slotLen);
+          if (refusal) throw new WriteRefused(refusal);
+          writeSpan(draft, slotCursor, slotLen, [piece]);
+        });
+      }
+    },
+  };
+}
+
+/** Total length of writing `events` back to back. Pure. */
+export function sequenceLength(events: readonly (NoteEvent | RestEvent)[]): Fraction {
+  return events.reduce((acc, e) => add(acc, notatedToFraction(e.duration)), ZERO);
+}
+
+/**
+ * True if `writeSequence(cursor, events)` would not need to touch any existing tuplet
+ * along the way (measures it would still need to append never contain tuplets, so
+ * those always "fit"). Pure; does not check whether measures would need appending.
+ */
+export function sequenceFits(score: Score, cursor: Cursor, events: readonly (NoteEvent | RestEvent)[]): boolean {
+  let measureIndex = cursor.measureIndex;
+  let offset = cursor.offset;
+  let remaining = sequenceLength(events);
+
+  while (!eq(remaining, ZERO)) {
+    const measureCount = score.parts[cursor.partIndex]?.measures.length ?? 0;
+    if (measureIndex >= measureCount) return true; // beyond existing measures: would be appended, never a tuplet
+    let measureLen: Fraction;
+    try {
+      measureLen = measureLengthAt(score, measureIndex);
+    } catch {
+      return true;
+    }
+    const available = sub(measureLen, offset);
+    const chunkLen = lt(available, remaining) ? available : remaining;
+    if (canWrite(score, { ...cursor, measureIndex, offset }, chunkLen)) return false;
+    remaining = sub(remaining, chunkLen);
+    offset = add(offset, chunkLen);
+    if (eq(offset, measureLen)) {
+      measureIndex += 1;
+      offset = ZERO;
+    }
+  }
+  return true;
 }
 
 /** Replaces the event with id `eventId` with rests of the same length, then normalizes the voice. */
