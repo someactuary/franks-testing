@@ -17,6 +17,7 @@ import {
   cmp,
   eq,
   frac,
+  fracToString,
   lt,
   measureLength as timeSigLength,
   toNumber,
@@ -25,7 +26,7 @@ import {
 } from "@/model/duration";
 import type { Id } from "@/model/ids";
 import { diatonic, keyAlter, type Alter, type KeySignature, type Step } from "@/model/pitch";
-import type { ClefKind, Note, StemDirection, Voice } from "@/model/score";
+import type { ClefKind, Note, StemDirection, TupletGroup, Voice } from "@/model/score";
 import { positionedEvents, type Event } from "@/model/traverse";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
 import { ENGRAVING } from "./constants";
@@ -110,6 +111,8 @@ export interface RestLayout {
   width: number;
   /** Whole-measure rests are centred in the measure rather than placed on their column. */
   centred: boolean;
+  /** `RestEvent.invisible`: the rest still owns its column but draws nothing. */
+  invisible: boolean;
 }
 
 export interface EventLayout {
@@ -119,6 +122,8 @@ export interface EventLayout {
   voiceIndex: number;
   offset: Fraction;
   length: Fraction;
+  /** Enclosing tuplet groups, outermost first (empty when the event is not in one). */
+  tuplets: TupletGroup[];
   notes: NoteLayout[];
   stem?: StemLayout;
   flag?: FlagLayout;
@@ -135,6 +140,8 @@ export interface EventLayout {
 
 export interface BeamGroup {
   dir: StemDirection;
+  /** Voice the group belongs to; beams never mix voices. */
+  voiceIndex: number;
   /** Indices into `StaffMeasureLayout.events`. */
   members: number[];
   /** Number of beams for each member, parallel to `members`. */
@@ -238,6 +245,30 @@ export interface RawEvent {
   offset: Fraction;
   length: Fraction;
   steps: number[];
+  /** Enclosing tuplet groups, outermost first. */
+  tuplets: TupletGroup[];
+}
+
+/**
+ * Id of the OUTERMOST tuplet enclosing an event, or undefined when it is in none.
+ * Beaming keys off this so that a nested tuplet beams with its parent — an eighth,
+ * a triplet of sixteenths and an eighth inside one triplet make a single beam.
+ */
+function tupletBeamKey(r: RawEvent): Id | undefined {
+  return r.tuplets[0]?.id;
+}
+
+/**
+ * Default stem direction of a voice on a staff that carries more than one:
+ * voices 0 and 2 point up, 1 and 3 down, whatever the pitches say.
+ */
+export function voiceStemDirection(voiceIndex: number): StemDirection {
+  return voiceIndex % 2 === 0 ? "up" : "down";
+}
+
+/** Vertical nudge (sp, y down) of a rest in a staff-measure with several voices. */
+export function voiceRestShift(voiceIndex: number): number {
+  return voiceIndex % 2 === 0 ? -1 : 1;
 }
 
 export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout {
@@ -255,14 +286,32 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
         offset: pe.offset,
         length: pe.length,
         steps,
+        tuplets: pe.tuplets,
       });
     }
   }
   raw.sort((a, b) => cmp(a.offset, b.offset) || a.voiceIndex - b.voiceIndex);
 
+  // Indices into `raw` for each voice that actually carries events, in time order.
+  const byVoice = new Map<number, number[]>();
+  for (const [i, r] of raw.entries()) {
+    const list = byVoice.get(r.voiceIndex);
+    if (list) list.push(i);
+    else byVoice.set(r.voiceIndex, [i]);
+  }
+  const multiVoice = byVoice.size > 1;
+  const voiceDir = (v: number): StemDirection | undefined =>
+    multiVoice ? voiceStemDirection(v) : undefined;
+
   // Beam grouping first: a group fixes one stem direction for all its members,
-  // which in turn decides notehead displacement and accidental positions.
-  const beams = buildBeamGroups(raw, input.timeSig, input.measureLength);
+  // which in turn decides notehead displacement and accidental positions. Groups
+  // are built per voice — a beam never mixes voices.
+  const beams: BeamGroup[] = [];
+  for (const v of [...byVoice.keys()].sort((a, b) => a - b)) {
+    beams.push(
+      ...buildBeamGroups(raw, byVoice.get(v)!, input.timeSig, input.measureLength, voiceDir(v)),
+    );
+  }
   const forcedDir = new Map<number, StemDirection>();
   const beamOf = new Map<number, number>();
   for (const [gi, g] of beams.entries()) {
@@ -272,9 +321,20 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
     }
   }
 
+  // A beam decides the direction of its members; then an explicit per-event
+  // override; then the voice rule (only when the staff carries several voices).
+  const dirFor = (i: number): StemDirection | undefined => {
+    const beamed = forcedDir.get(i);
+    if (beamed) return beamed;
+    const r = raw[i]!;
+    if (r.event.kind === "note" && r.event.stem) return r.event.stem;
+    return voiceDir(r.voiceIndex);
+  };
+
   const memory = new AccidentalMemory(key);
   const tiedFrom = input.tiedFrom ?? EMPTY_IDS;
   const events: EventLayout[] = raw.map((r, i) => {
+    const dir = dirFor(i);
     const layout = layoutEvent({
       font,
       defaults,
@@ -288,7 +348,9 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
       offset: r.offset,
       length: r.length,
       steps: r.steps,
-      ...(forcedDir.has(i) ? { forcedDir: forcedDir.get(i)! } : {}),
+      tuplets: r.tuplets,
+      restShift: multiVoice ? voiceRestShift(r.voiceIndex) : 0,
+      ...(dir ? { forcedDir: dir } : {}),
       beamed: beamOf.has(i),
     });
     const gi = beamOf.get(i);
@@ -296,7 +358,62 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
     return layout;
   });
 
+  if (multiVoice) resolveVoiceCollisions(events);
+
   return { partIndex: input.partIndex, staffIndex: input.staffIndex, clef, events, beams };
+}
+
+// ---------------------------------------------------------------------------
+// Collisions between the voices of one staff
+// ---------------------------------------------------------------------------
+
+/** Move every piece of an event's ink `dx` to the right. */
+function shiftEventLayout(ev: EventLayout, dx: number): void {
+  for (const n of ev.notes) {
+    n.x += dx;
+    if (n.accidental) {
+      n.accidental.left += dx;
+      for (const part of n.accidental.parts) part.x += dx;
+    }
+  }
+  for (const d of ev.dots) d.x += dx;
+  for (const l of ev.ledgers) {
+    l.x1 += dx;
+    l.x2 += dx;
+  }
+  if (ev.stem) ev.stem.x += dx;
+  if (ev.flag) ev.flag.x += dx;
+  ev.right += dx;
+  ev.left = Math.max(0, ev.left - dx);
+}
+
+/**
+ * Where two voices attack together on one staff and their noteheads would touch
+ * (a unison or a second), the higher-numbered voice's chord is nudged right by
+ * one notehead width. Deliberately simple: no shared noteheads, no merging.
+ */
+function resolveVoiceCollisions(events: EventLayout[]): void {
+  const byOffset = new Map<string, EventLayout[]>();
+  for (const ev of events) {
+    if (ev.notes.length === 0) continue;
+    const key = fracToString(ev.offset);
+    const list = byOffset.get(key);
+    if (list) list.push(ev);
+    else byOffset.set(key, [ev]);
+  }
+  for (const list of byOffset.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.voiceIndex - b.voiceIndex);
+    for (let i = 1; i < list.length; i++) {
+      const ev = list[i]!;
+      const collides = list
+        .slice(0, i)
+        .some((other) =>
+          other.notes.some((a) => ev.notes.some((b) => Math.abs(a.step - b.step) <= 1)),
+        );
+      if (collides) shiftEventLayout(ev, ev.notes[0]!.width);
+    }
+  }
 }
 
 const EMPTY_IDS: ReadonlySet<Id> = new Set<Id>();
@@ -314,6 +431,9 @@ interface EventInput {
   offset: Fraction;
   length: Fraction;
   steps: number[];
+  tuplets: TupletGroup[];
+  /** Vertical nudge for rests when the staff carries several voices. */
+  restShift: number;
   forcedDir?: StemDirection;
   beamed: boolean;
 }
@@ -334,7 +454,7 @@ function layoutRest(input: EventInput): EventLayout {
   // Whole (and measure) rests hang from the 4th line from the bottom; everything
   // else sits on / is centred about the middle line.
   const lineY = glyph === "restWhole" ? 1 : 2;
-  const y = lineY - (event.yOffsetSteps ?? 0) * 0.5;
+  const y = lineY - (event.yOffsetSteps ?? 0) * 0.5 + input.restShift;
 
   const dotBox = glyphBox(font, "augmentationDot");
   const dots: DotLayout[] = [];
@@ -352,10 +472,17 @@ function layoutRest(input: EventInput): EventLayout {
     voiceIndex: input.voiceIndex,
     offset: input.offset,
     length: input.length,
+    tuplets: input.tuplets,
     notes: [],
     dots,
     ledgers: [],
-    rest: { glyph, y, width: box.width, centred: isMeasureRest },
+    rest: {
+      glyph,
+      y,
+      width: box.width,
+      centred: isMeasureRest,
+      invisible: event.invisible === true,
+    },
     left: 0,
     right,
   };
@@ -455,6 +582,7 @@ function layoutNoteEvent(input: EventInput): EventLayout {
     voiceIndex: input.voiceIndex,
     offset: input.offset,
     length: input.length,
+    tuplets: input.tuplets,
     notes,
     dots,
     ledgers,
@@ -633,11 +761,21 @@ function isBeamable(r: RawEvent): boolean {
   return r.event.beam !== "none";
 }
 
-/** Automatic beam groups, honouring per-event `beam` overrides. */
+/**
+ * Automatic beam groups for ONE voice, honouring per-event `beam` overrides.
+ * `indices` selects that voice's events out of `raw`, in time order; the members
+ * of the groups returned are indices into `raw`.
+ *
+ * Inside a tuplet the measure's beat grid does not apply — the tuplet's own unit
+ * grouping does, so a triplet of three eighths beams as one group whatever beat
+ * it straddles, and a group never crosses a tuplet boundary.
+ */
 export function buildBeamGroups(
   raw: RawEvent[],
+  indices: number[],
   ts: TimeSignature,
   measureLength: Fraction,
+  voiceDir?: StemDirection,
 ): BeamGroup[] {
   const unit = beatUnit(ts);
   const groups: number[][] = [];
@@ -647,7 +785,7 @@ export function buildBeamGroups(
     current = [];
   };
 
-  for (let i = 0; i < raw.length; i++) {
+  for (const i of indices) {
     const r = raw[i]!;
     if (!isBeamable(r)) {
       flush();
@@ -659,9 +797,12 @@ export function buildBeamGroups(
     let startNew: boolean;
     if (override === "begin" || prev === undefined) startNew = true;
     else if (override === "continue") startNew = false;
+    else if (tupletBeamKey(prev) !== tupletBeamKey(r)) startNew = true;
     else {
       const contiguous = eq(add(prev.offset, prev.length), r.offset);
-      const sameSegment = segmentIndex(prev.offset, unit) === segmentIndex(r.offset, unit);
+      const sameSegment =
+        tupletBeamKey(r) !== undefined ||
+        segmentIndex(prev.offset, unit) === segmentIndex(r.offset, unit);
       startNew = !contiguous || !sameSegment;
     }
     if (startNew) flush();
@@ -681,7 +822,7 @@ export function buildBeamGroups(
     });
     const steps: number[] = [];
     for (const i of members) steps.push(...raw[i]!.steps);
-    let override: StemDirection | undefined;
+    let override: StemDirection | undefined = voiceDir;
     for (const i of members) {
       const ev = raw[i]!.event;
       if (ev.kind === "note" && ev.stem) {
@@ -689,7 +830,12 @@ export function buildBeamGroups(
         break;
       }
     }
-    out.push({ dir: stemDirectionForSteps(steps, override), members, counts });
+    out.push({
+      dir: stemDirectionForSteps(steps, override),
+      voiceIndex: raw[members[0]!]!.voiceIndex,
+      members,
+      counts,
+    });
   }
   return out;
 }
@@ -725,6 +871,7 @@ function canMerge(
   const all = [...a, ...b].map((i) => raw[i]!);
   for (const r of all) {
     const ev = r.event;
+    if (r.tuplets.length > 0) return false;
     if (ev.kind !== "note") return false;
     if (ev.duration.base !== 8 || ev.duration.dots !== 0) return false;
     if (ev.beam && ev.beam !== "auto") return false;

@@ -24,6 +24,24 @@ export function setStaff(score: Score, measureIndex: number, staffIndex: number,
   sm.voices = [{ id: newId(), index: 0, items }];
 }
 
+/** Replace the voices of one staff of one measure; `items[i]` becomes voice i. */
+export function setVoices(
+  score: Score,
+  measureIndex: number,
+  staffIndex: number,
+  items: VoiceItem[][],
+): void {
+  const sm = score.parts[0]!.measures[measureIndex]!.staves[staffIndex]!;
+  sm.voices = items.map((voiceItems, index) => ({ id: newId(), index, items: voiceItems }));
+}
+
+/** Direction of the stem drawn for an event: the tip is the end away from the notehead. */
+export function stemDirection(prims: Primitive[], eventId: string): "up" | "down" | undefined {
+  const stem = withRef(prims, eventId, "stem").find((p): p is LinePrim => p.type === "line");
+  if (!stem) return undefined;
+  return stem.y2 < stem.y1 ? "up" : "down";
+}
+
 /** Add dots to a note or rest event. */
 export function withDots<T extends VoiceItem & { duration: { base: NoteValue } }>(ev: T, dots: 1 | 2 | 3): T {
   return { ...ev, duration: notated(ev.duration.base, dots) };
