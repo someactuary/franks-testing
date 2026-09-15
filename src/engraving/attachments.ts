@@ -109,12 +109,21 @@ export interface EmitSystem {
   width: number;
   spacings: MeasureSpacing[];
   primitives: Primitive[];
+  /**
+   * Where this system's staves sit. Staves are spaced by content, so every
+   * system has its own positions; always read a staff's y from here.
+   */
+  slots: StaffSlot[];
 }
 
 export interface EmitContext {
   score: Score;
   font: SmuflFontData;
   defaults: EngravingDefaults;
+  /**
+   * The staff slots in order, for index and part/staff lookups only — their y
+   * is the default spacing, not where any particular system put its staves.
+   */
   slots: StaffSlot[];
 }
 
@@ -153,10 +162,12 @@ export interface MeasureSite {
 export interface SiteIndex {
   byEvent: Map<Id, EventSite>;
   byMeasure: Map<number, MeasureSite>;
+  /** Each system's staff slots, parallel to the systems the index was built from. */
+  slotsBySystem: StaffSlot[][];
 }
 
 /** Index every laid-out event and measure of every system by id. */
-export function buildSites(systems: readonly EmitSystem[], slots: readonly StaffSlot[]): SiteIndex {
+export function buildSites(systems: readonly EmitSystem[]): SiteIndex {
   const byEvent = new Map<Id, EventSite>();
   const byMeasure = new Map<number, MeasureSite>();
   for (const [systemIndex, sys] of systems.entries()) {
@@ -165,7 +176,7 @@ export function buildSites(systems: readonly EmitSystem[], slots: readonly Staff
       const columnX = new Map<string, number>();
       for (const c of spacing.columns) columnX.set(fracToString(c.offset), spacing.x + c.x);
       for (const [slotIndex, staff] of spacing.staves.entries()) {
-        const slot = slots[slotIndex];
+        const slot = sys.slots[slotIndex];
         if (!slot) continue;
         for (const ev of staff.events) {
           byEvent.set(ev.event.id, {
@@ -180,7 +191,7 @@ export function buildSites(systems: readonly EmitSystem[], slots: readonly Staff
       }
     }
   }
-  return { byEvent, byMeasure };
+  return { byEvent, byMeasure, slotsBySystem: systems.map((s) => s.slots) };
 }
 
 export function slotIndexOf(
@@ -252,7 +263,7 @@ export function resolveAnchor(
     return {
       systemIndex: site.systemIndex,
       slotIndex,
-      staffY: slots[slotIndex]?.y ?? site.staffY,
+      staffY: index.slotsBySystem[site.systemIndex]?.[slotIndex]?.y ?? site.staffY,
       x: site.x,
       event: site,
     };
@@ -262,7 +273,7 @@ export function resolveAnchor(
   return {
     systemIndex: loc.systemIndex,
     slotIndex: declared,
-    staffY: slots[declared]?.y ?? 0,
+    staffY: index.slotsBySystem[loc.systemIndex]?.[declared]?.y ?? 0,
     x: offsetX(loc.spacing, anchor.offset),
   };
 }
@@ -297,7 +308,7 @@ const DYNAMIC_LETTER_GLYPHS: Record<string, string> = {
 };
 
 /** Extent of a dynamic above and below its baseline, at the given size. */
-function dynamicBox(font: SmuflFontData, text: string, size: number): { up: number; down: number } {
+export function dynamicBox(font: SmuflFontData, text: string, size: number): { up: number; down: number } {
   const scale = size / 4;
   let up = 0;
   let down = 0;
@@ -388,8 +399,8 @@ interface Pass {
 export function emitAttachments(systems: EmitSystem[], ctx: EmitContext): SystemExtent[] {
   const pass: Pass = {
     ctx,
-    index: buildSites(systems, ctx.slots),
-    skylines: systems.map((s) => buildSkyline(s.primitives, ctx.slots, ctx.font)),
+    index: buildSites(systems),
+    skylines: systems.map((s) => buildSkyline(s.primitives, s.slots, ctx.font)),
     extents: systems.map(() => ({ above: 0, below: 0 })),
     systems,
   };

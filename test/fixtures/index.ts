@@ -11,6 +11,8 @@ import { satb } from "./satb";
 import { expressive } from "./expressive";
 import { hymn } from "./hymn";
 import { ornaments } from "./ornaments";
+import { hymnVerses } from "./hymn-verses";
+import { ledgerCrowd } from "./ledger-crowd";
 import type { Score } from "@/model";
 
 export const FIXTURES: Record<string, () => Score> = {
@@ -27,4 +29,6 @@ export const FIXTURES: Record<string, () => Score> = {
   expressive,
   hymn,
   ornaments,
+  "hymn-verses": () => hymnVerses(),
+  "ledger-crowd": ledgerCrowd,
 };

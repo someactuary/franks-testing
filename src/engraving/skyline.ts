@@ -124,9 +124,14 @@ function textInk(p: Extract<Primitive, { type: "text" }>): Ink {
   return { x1, x2: x1 + width, minY: p.y - p.size * 0.8, maxY: p.y + p.size * 0.25 };
 }
 
-/** Ink box of one primitive, or undefined when it carries no useful ink. */
+/** Ink box of one primitive for skyline purposes, or undefined when it carries no useful ink. */
 export function primitiveInk(p: Primitive, font: SmuflFontData): Ink | undefined {
   if ("ref" in p && p.ref && IGNORED_ROLES.has(p.ref.role)) return undefined;
+  return inkBox(p, font);
+}
+
+/** Ink box of one primitive whatever its role; undefined for staff lines and empty shapes. */
+export function inkBox(p: Primitive, font: SmuflFontData): Ink | undefined {
   switch (p.type) {
     case "glyph": {
       const box = glyphBox(font, p.glyph);
@@ -177,7 +182,8 @@ function zoneOf(skylines: SystemSkyline, midY: number): StaffSkyline | undefined
  * Top/bottom ink profile of every staff of one system.
  *
  * Each staff owns the band that reaches half way to its neighbours (and to
- * infinity outwards for the first and last staff); ink is attributed to the
+ * infinity outwards for the first and last staff) unless its slot names its own
+ * band (content-spaced slots do, see vertical.ts); ink is attributed to the
  * staff whose band contains its vertical middle and clipped to that band, so a
  * long stem between two staves cannot make its neighbour's skyline lie.
  */
@@ -193,8 +199,8 @@ export function buildSkyline(
       partIndex: slot.partIndex,
       staffIndex: slot.staffIndex,
       staffY: slot.y,
-      zoneTop: prev ? (prev.y + STAFF_HEIGHT + slot.y) / 2 : -Infinity,
-      zoneBottom: next ? (slot.y + STAFF_HEIGHT + next.y) / 2 : Infinity,
+      zoneTop: slot.zoneTop ?? (prev ? (prev.y + STAFF_HEIGHT + slot.y) / 2 : -Infinity),
+      zoneBottom: slot.zoneBottom ?? (next ? (slot.y + STAFF_HEIGHT + next.y) / 2 : Infinity),
       top: [],
       bottom: [],
     };

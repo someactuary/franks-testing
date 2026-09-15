@@ -104,6 +104,16 @@ export const ENGRAVING = {
   textWidthRatio: 0.5,
   /** Extra allowance above/below each staff when stacking systems. */
   staffOverhangSp: 2.0,
+  /**
+   * Clear space kept between the lowest ink of one staff and the highest ink of
+   * the staff below it; a gap between staves grows past its default to keep it.
+   */
+  interStaffClearanceSp: 1.5,
+  /**
+   * Staff pitch of the provisional pass that measures each staff's extents: far
+   * enough apart that nothing drawn for one staff can reach the next.
+   */
+  provisionalStaffPitchSp: 1000,
   /** Distance from the top staff line up to the measure-number baseline. */
   measureNumberOffsetSp: 1.8,
   /** Font size (sp) of measure numbers. */
