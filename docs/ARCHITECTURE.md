@@ -246,3 +246,40 @@ spacing; the rule assumes no item sits more than 500 sp from its staff.
 `npm test` skips the real-Audiveris test. Run it on purpose with
 `PMN_OMR_REAL=1 npx vitest run server/omr-real-run.test.ts` (needs Audiveris and the
 local sample PDF).
+
+## Manual layout control (2026-09-15)
+
+Requested by Frank after PDF import left a real file with a sparse last page (a
+9-page piano PDF's original page breaks no longer matched once measures were edited).
+
+- **Mid-song key signature changes.** `MeasureAttributes.keySig` already supported this
+  at the model level (M1's "key signature at every system" rule already draws the new
+  key, with cancellation naturals, from the measure it's set on). The only thing
+  missing was a way to set it: `setKeySignature(measureIndex, keySig | null)`
+  (`src/commands/keysig.ts`). `null` doesn't erase a key change, it removes the
+  *explicit* one at that measure so the key already in effect one measure earlier
+  continues (`keySignatureAt` reads the most recent explicit `keySig` at or before a
+  measure). Key-aware note entry needs no change: it already calls `keySignatureAt` at
+  the cursor's measure. UI: the Key group in the second toolbar row (`Palettes.tsx`)
+  shows the key in effect at the cursor's measure and a Clear button enabled only when
+  that exact measure carries an explicit change.
+- **Manual line/page breaks and caps.** `LayoutHints` gained two optional fields,
+  `measuresPerSystem` and `systemsPerPage` (`src/model/score.ts`, zod schema in
+  `src/io/pscore.ts`). Both are upper bounds only: `planSystems`
+  (`src/engraving/breaking.ts`) and `paginate` (`src/engraving/vertical.ts`) treat
+  reaching the cap exactly like reaching a forced break — it can only make a
+  line/page *shorter* than it would otherwise be; a measure/system that would overflow
+  the available width/height still breaks first regardless of the cap, and a forced
+  break resets the count for what follows rather than "using up" part of it. Commands:
+  `toggleSystemBreak`/`togglePageBreak` (act on one measure, no-op at measure 0),
+  `setMeasuresPerSystem`/`setSystemsPerPage` (the global caps), and
+  `clearForcedBreaks` (empties both break lists — the one-click fix for the sparse-page
+  case, since it hands every measure back to automatic fill-to-width/height breaking).
+  All five are `src/commands/layout.ts`. UI: the Layout group in `Palettes.tsx` — two
+  number inputs (blank = automatic) and three buttons, all reading/acting on the
+  cursor's measure via `PaletteAction`s `toggleSystemBreak`/`togglePageBreak` (no
+  measure index in the action itself, same pattern as `tempo`/`text` reading
+  `state.cursor`).
+- Verified end to end on Frank's real 99-measure imported file: clearing its imported
+  forced breaks (which had frozen a specific page at "just 4 measures left" after
+  earlier measures were removed) took it from 15 pages to 11.

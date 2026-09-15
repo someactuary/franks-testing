@@ -159,33 +159,43 @@ export interface SystemPlacement {
 
 /**
  * Stack systems onto pages top to bottom, starting a new page when a system no
- * longer fits or when a page break was forced.
+ * longer fits, when a page break was forced, or when `systemsPerPage` is reached.
+ *
+ * `systemsPerPage` (docs/ARCHITECTURE.md, "Manual layout control") only ever makes
+ * a page *shorter* than it would otherwise be: a system that no longer fits still
+ * starts a fresh page regardless of the count so far, cap or no cap.
  */
 export function paginate(
   extents: SystemExtent[],
   metrics: PageMetrics,
   settings: EngravingSettings,
   firstPageExtraTop: number,
+  systemsPerPage?: number,
 ): SystemPlacement[] {
   const out: SystemPlacement[] = [];
   let pageIndex = 0;
   let cursor = metrics.top + firstPageExtraTop;
   let placedAny = false;
+  let systemsOnPage = 0;
   const limit = metrics.top + metrics.contentHeight;
 
   for (const e of extents) {
     // The very first system always goes where the cursor is; after that a system
-    // moves to a fresh page when a break was forced or it no longer fits. A
-    // system taller than the whole content area still gets placed (and overflows)
-    // rather than looping forever.
-    if (placedAny && (e.startsPage || cursor + e.above + e.below > limit)) {
+    // moves to a fresh page when a break was forced, it no longer fits, or the
+    // page has already reached its target system count. A system taller than the
+    // whole content area still gets placed (and overflows) rather than looping
+    // forever.
+    const capped = systemsPerPage !== undefined && systemsOnPage >= systemsPerPage;
+    if (placedAny && (e.startsPage || capped || cursor + e.above + e.below > limit)) {
       pageIndex++;
       cursor = metrics.top;
+      systemsOnPage = 0;
     }
     const y = cursor + e.above;
     out.push({ pageIndex, y });
     cursor = y + e.below + settings.systemGapSp;
     placedAny = true;
+    systemsOnPage++;
   }
   return out;
 }

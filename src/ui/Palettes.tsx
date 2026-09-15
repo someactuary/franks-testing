@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { glyphChar } from "@/render/smufl";
 import type { SmuflFontData } from "@/render/smufl/types";
-import type { Articulation, NotatedDuration, Placement } from "@/model";
-import type { PaletteAction } from "@/input/types";
+import type { Articulation, NotatedDuration, Placement, Score } from "@/model";
+import type { Cursor, PaletteAction } from "@/input/types";
+import { keySignatureAt } from "@/input/navigation";
+import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
 
 export interface PalettesProps {
   font: SmuflFontData;
+  score: Score;
+  cursor: Cursor;
   onApplyAction: (action: PaletteAction) => void;
 }
 
@@ -157,12 +161,78 @@ function TextForm({ onApplyAction, onDone }: { onApplyAction: (a: PaletteAction)
 }
 
 /**
+ * A number input for a layout cap (measures/system, systems/page): blank = automatic.
+ * Kept as a local draft so a multi-digit number can be typed before it commits (on
+ * blur or Enter) rather than dispatching — and re-laying out the whole score — on
+ * every keystroke; resyncs if the underlying value changes elsewhere (e.g. undo).
+ */
+function CappedCountField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: number | undefined;
+  onCommit: (value: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value === undefined ? "" : String(value));
+  // Resync the draft when `value` changes for a reason other than this field's own
+  // commit (undo/redo, loading a different score): compared and adjusted during
+  // render, React's documented alternative to an effect for this ("Adjusting state
+  // when a prop changes"), so it never fires the set-state-in-effect lint rule.
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    setDraft(value === undefined ? "" : String(value));
+  }
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      onCommit(null);
+      return;
+    }
+    const n = Number(trimmed);
+    if (Number.isInteger(n) && n > 0) onCommit(n);
+    else setDraft(value === undefined ? "" : String(value)); // invalid: revert to the last committed value
+  }
+
+  return (
+    <label>
+      {label}{" "}
+      <input
+        type="number"
+        min={1}
+        step={1}
+        placeholder="auto"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        style={{ width: "3.5em" }}
+      />
+    </label>
+  );
+}
+
+/**
  * Second toolbar row: grouped notation palettes. Every button calls
  * `onApplyAction` with a `PaletteAction` (src/input/types.ts); this component
- * holds no score state, only the two inline forms' own draft fields.
+ * holds no score state of its own beyond the inline forms' draft fields — the
+ * Key and Layout groups read `score`/`cursor` directly so they always show what's
+ * true at the cursor's measure, including as the cursor moves.
  */
-export function Palettes({ font, onApplyAction }: PalettesProps) {
+export function Palettes({ font, score, cursor, onApplyAction }: PalettesProps) {
   const [openForm, setOpenForm] = useState<"tempo" | "text" | null>(null);
+  const effectiveKey = keySignatureAt(score, cursor.measureIndex);
+  const keyChangesHere = score.measures[cursor.measureIndex]?.keySig !== undefined;
+  const measureLabel = cursor.measureIndex + 1;
+  const atFirstMeasure = cursor.measureIndex === 0;
 
   return (
     <div className="palette-row" role="toolbar" aria-label="Notation palettes">
@@ -271,6 +341,79 @@ export function Palettes({ font, onApplyAction }: PalettesProps) {
         ))}
         <button type="button" title="Toggle dot" onClick={() => onApplyAction({ kind: "toggleDot" })}>
           •
+        </button>
+      </div>
+
+      <div className="palette-group" aria-label="Key signature">
+        <span className="palette-group-label">Key (m{measureLabel})</span>
+        <select
+          value={effectiveKey.fifths}
+          title="Key signature from this measure on"
+          onChange={(e) =>
+            onApplyAction({ kind: "setKeySignature", keySig: { fifths: Number(e.target.value), mode: effectiveKey.mode } })
+          }
+        >
+          {KEY_SIG_OPTIONS.map((f) => (
+            <option key={f} value={f}>
+              {keySigLabel(f)}
+            </option>
+          ))}
+        </select>
+        <select
+          value={effectiveKey.mode}
+          onChange={(e) =>
+            onApplyAction({ kind: "setKeySignature", keySig: { fifths: effectiveKey.fifths, mode: e.target.value as "major" | "minor" } })
+          }
+        >
+          <option value="major">major</option>
+          <option value="minor">minor</option>
+        </select>
+        <button
+          type="button"
+          disabled={!keyChangesHere}
+          title="Remove the key change at this measure (the previous key continues)"
+          onClick={() => onApplyAction({ kind: "clearKeySignature" })}
+        >
+          Clear
+        </button>
+      </div>
+
+      <div className="palette-group" aria-label="Layout">
+        <span className="palette-group-label">Layout</span>
+        <CappedCountField
+          label="Measures/line"
+          value={score.layout.measuresPerSystem}
+          onCommit={(value) => onApplyAction({ kind: "setMeasuresPerSystem", value })}
+        />
+        <CappedCountField
+          label="Systems/page"
+          value={score.layout.systemsPerPage}
+          onCommit={(value) => onApplyAction({ kind: "setSystemsPerPage", value })}
+        />
+        <button
+          type="button"
+          disabled={atFirstMeasure}
+          aria-pressed={score.layout.systemBreaks.includes(cursor.measureIndex)}
+          title={atFirstMeasure ? "The first measure can't start a new line" : `Start a new line at measure ${measureLabel}`}
+          onClick={() => onApplyAction({ kind: "toggleSystemBreak" })}
+        >
+          ⏎ Line
+        </button>
+        <button
+          type="button"
+          disabled={atFirstMeasure}
+          aria-pressed={score.layout.pageBreaks.includes(cursor.measureIndex)}
+          title={atFirstMeasure ? "The first measure can't start a new page" : `Start a new page at measure ${measureLabel}`}
+          onClick={() => onApplyAction({ kind: "togglePageBreak" })}
+        >
+          ⏎ Page
+        </button>
+        <button
+          type="button"
+          title="Remove every forced line/page break and let the layout flow automatically"
+          onClick={() => onApplyAction({ kind: "clearForcedBreaks" })}
+        >
+          Reflow
         </button>
       </div>
     </div>

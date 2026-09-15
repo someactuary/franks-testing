@@ -381,6 +381,8 @@ const LayoutHintsSchema = z
     systemBreaks: z.array(z.number()),
     pageBreaks: z.array(z.number()),
     nudges: z.record(IdSchema, z.object({ dx: z.number(), dy: z.number() }).strict()),
+    measuresPerSystem: z.number().int().positive().exactOptional(),
+    systemsPerPage: z.number().int().positive().exactOptional(),
   })
   .strict();
 

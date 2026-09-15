@@ -3,7 +3,7 @@
  * Everything here is plain data; the UI owns the store, src/input owns the rules.
  */
 import type { Fraction, NoteValue } from "@/model/duration";
-import type { Alter } from "@/model/pitch";
+import type { Alter, KeySignature } from "@/model/pitch";
 import type {
   Articulation,
   ClefKind,
@@ -151,7 +151,18 @@ export type PaletteAction =
   | { kind: "setStaffName"; staffIndex: number; name: string; abbreviation?: string }
   | { kind: "setBracket"; bracket: StaffGroupSymbol }
   // Voices
-  | { kind: "setVoice"; voiceIndex: number };
+  | { kind: "setVoice"; voiceIndex: number }
+  // Key signature: applies at the cursor's measure, per docs/ARCHITECTURE.md's
+  // "Manual layout control" (setKeySignature reads state.cursor.measureIndex, so the
+  // action itself carries no measure index).
+  | { kind: "setKeySignature"; keySig: KeySignature }
+  | { kind: "clearKeySignature" }
+  // Manual layout control: forced breaks (at the cursor's measure) and global caps.
+  | { kind: "toggleSystemBreak" }
+  | { kind: "togglePageBreak" }
+  | { kind: "setMeasuresPerSystem"; value: number | null }
+  | { kind: "setSystemsPerPage"; value: number | null }
+  | { kind: "clearForcedBreaks" };
 
 export type ActionHandler = (state: EditorState, action: PaletteAction) => KeyResult | null;
 

@@ -20,6 +20,8 @@ import {
   toggleArticulation,
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
+import { setKeySignature } from "@/commands/keysig";
+import { clearForcedBreaks, setMeasuresPerSystem, setSystemsPerPage, togglePageBreak, toggleSystemBreak } from "@/commands/layout";
 import type { Command } from "@/commands/types";
 import {
   absoluteOffset,
@@ -300,6 +302,27 @@ export const handleAction: ActionHandler = (state, action) => {
 
     case "setVoice":
       return { commands: [], cursor: { ...cursor, voiceIndex: action.voiceIndex }, message: `Voice ${action.voiceIndex + 1}` };
+
+    case "setKeySignature":
+      return { commands: [setKeySignature(cursor.measureIndex, action.keySig)] };
+
+    case "clearKeySignature":
+      return { commands: [setKeySignature(cursor.measureIndex, null)] };
+
+    case "toggleSystemBreak":
+      return { commands: [toggleSystemBreak(cursor.measureIndex)] };
+
+    case "togglePageBreak":
+      return { commands: [togglePageBreak(cursor.measureIndex)] };
+
+    case "setMeasuresPerSystem":
+      return { commands: [setMeasuresPerSystem(action.value)] };
+
+    case "setSystemsPerPage":
+      return { commands: [setSystemsPerPage(action.value)] };
+
+    case "clearForcedBreaks":
+      return { commands: [clearForcedBreaks()], message: "Cleared all forced breaks" };
 
     default: {
       const _exhaustive: never = action;

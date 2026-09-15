@@ -282,6 +282,15 @@ export interface LayoutHints {
   pageBreaks: number[];
   /** Manual offsets in staff spaces keyed by element id. */
   nudges: Record<Id, { dx: number; dy: number }>;
+  /**
+   * Target maximum measures per system. A system still breaks earlier than this when
+   * the measures don't fit the page width, or when a forced system/page break falls
+   * first; it never breaks *later* just because more would fit. undefined = automatic
+   * (fill each system to the available width, the M0 behaviour).
+   */
+  measuresPerSystem?: number;
+  /** Target maximum systems per page, with the same fit-first, cap-second rule. */
+  systemsPerPage?: number;
 }
 
 export const EMPTY_LAYOUT_HINTS: LayoutHints = { systemBreaks: [], pageBreaks: [], nudges: {} };

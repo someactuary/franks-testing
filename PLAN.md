@@ -419,3 +419,10 @@ score canvas is custom SVG either way).
     wrong pitches. A side-by-side overlay or measure-level highlight would help.
   - The PDF is kept in memory only (lost on reload); scans untested (only digital PDFs).
   - Playback moved to M5.
+- 2026-09-15 (feature: mid-song key changes + manual layout control). Implemented
+  directly (no agent fan-out — well-scoped enough for one pass): `setKeySignature`
+  command; `LayoutHints.measuresPerSystem`/`systemsPerPage` (upper-bound caps, fit
+  always wins) plus `toggleSystemBreak`/`togglePageBreak`/`clearForcedBreaks`
+  commands; Key and Layout palette groups. 822 tests (29 new), lint and build clean.
+  Verified in the browser on Frank's real sparse-page file: Reflow took it from 15
+  pages to 11; a 3-measures-per-line cap on a fresh score rendered exactly 3+3+2.

@@ -4,6 +4,11 @@
  * M0 uses first-fit greedy breaking (fill the system, then justify). A measure
  * is wider when it starts a system because it carries a clef prefix, so the
  * caller supplies both widths.
+ *
+ * `measuresPerSystem` (docs/ARCHITECTURE.md, "Manual layout control") caps how many
+ * measures a system may hold: reaching the cap behaves exactly like a forced break
+ * (an early `flush()`), but it can only make a system *shorter* than what fits — a
+ * measure that would overflow the width still breaks first, cap or no cap.
  */
 
 export interface BreakInput {
@@ -17,6 +22,8 @@ export interface BreakInput {
   systemBreaks: readonly number[];
   /** Measure indices that must begin a new page (and therefore a new system). */
   pageBreaks: readonly number[];
+  /** Target maximum measures per system; undefined = fill to `availableWidth` (M0 default). */
+  measuresPerSystem?: number;
 }
 
 export interface SystemPlan {
@@ -43,7 +50,8 @@ export function planSystems(input: BreakInput): SystemPlan[] {
   };
 
   for (let m = 0; m < input.measureCount; m++) {
-    const forced = current.length > 0 && (forcedSystem.has(m) || forcedPage.has(m));
+    const capped = input.measuresPerSystem !== undefined && current.length >= input.measuresPerSystem;
+    const forced = current.length > 0 && (forcedSystem.has(m) || forcedPage.has(m) || capped);
     if (forced) {
       const page = forcedPage.has(m);
       flush();

@@ -207,6 +207,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     availableWidth,
     systemBreaks: score.layout?.systemBreaks ?? [],
     pageBreaks: score.layout?.pageBreaks ?? [],
+    ...(score.layout?.measuresPerSystem !== undefined ? { measuresPerSystem: score.layout.measuresPerSystem } : {}),
   });
 
   // --- 3. horizontal layout of every system --------------------------------
@@ -322,6 +323,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     metrics,
     settings,
     hasTitleBlock ? ENGRAVING.titleBlockSp : 0,
+    score.layout?.systemsPerPage,
   );
 
   const pages: Page[] = [];

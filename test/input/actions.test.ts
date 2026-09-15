@@ -392,3 +392,57 @@ describe("handleAction: setVoice", () => {
     expect(result?.message).toBe("Voice 2");
   });
 });
+
+describe("handleAction: setKeySignature / clearKeySignature", () => {
+  it("sets a key change at the cursor's measure and clearing it lets the previous key continue", () => {
+    const h = new Harness(newPianoScore({ measureCount: 4, keySig: { fifths: 0, mode: "major" } }));
+    h.cursor = { ...h.cursor, measureIndex: 2 };
+
+    h.act({ kind: "setKeySignature", keySig: { fifths: 4, mode: "major" } });
+    expect(h.history.current.measures[2]!.keySig).toEqual({ fifths: 4, mode: "major" });
+
+    h.act({ kind: "clearKeySignature" });
+    expect(h.history.current.measures[2]!.keySig).toBeUndefined();
+  });
+});
+
+describe("handleAction: manual layout control", () => {
+  it("toggleSystemBreak / togglePageBreak act on the cursor's measure and refuse nothing", () => {
+    const h = new Harness(newPianoScore({ measureCount: 6 }));
+    h.cursor = { ...h.cursor, measureIndex: 3 };
+
+    h.act({ kind: "toggleSystemBreak" });
+    expect(h.history.current.layout.systemBreaks).toEqual([3]);
+    h.act({ kind: "toggleSystemBreak" });
+    expect(h.history.current.layout.systemBreaks).toEqual([]);
+
+    h.act({ kind: "togglePageBreak" });
+    expect(h.history.current.layout.pageBreaks).toEqual([3]);
+  });
+
+  it("setMeasuresPerSystem / setSystemsPerPage set or clear the global caps", () => {
+    const h = new Harness(newPianoScore({ measureCount: 4 }));
+
+    h.act({ kind: "setMeasuresPerSystem", value: 3 });
+    expect(h.history.current.layout.measuresPerSystem).toBe(3);
+    h.act({ kind: "setMeasuresPerSystem", value: null });
+    expect(h.history.current.layout.measuresPerSystem).toBeUndefined();
+
+    h.act({ kind: "setSystemsPerPage", value: 2 });
+    expect(h.history.current.layout.systemsPerPage).toBe(2);
+  });
+
+  it("clearForcedBreaks empties both break lists and reports it", () => {
+    const h = new Harness(newPianoScore({ measureCount: 6 }));
+    h.cursor = { ...h.cursor, measureIndex: 2 };
+    h.act({ kind: "toggleSystemBreak" });
+    h.cursor = { ...h.cursor, measureIndex: 4 };
+    h.act({ kind: "togglePageBreak" });
+
+    const result = h.act({ kind: "clearForcedBreaks" });
+
+    expect(h.history.current.layout.systemBreaks).toEqual([]);
+    expect(h.history.current.layout.pageBreaks).toEqual([]);
+    expect(result?.message).toMatch(/cleared/i);
+  });
+});

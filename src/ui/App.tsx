@@ -23,6 +23,7 @@ import type { ImportedFromOmr } from "./ImportPdfDialog";
 import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { newSatbScore } from "./presets";
+import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
 import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
 import { handleAction } from "@/input/actions";
@@ -46,8 +47,6 @@ const TIME_SIG_OPTIONS: { label: string; value: TimeSignature }[] = [
 
 const MEASURE_COUNT_OPTIONS = [8, 16, 32];
 
-const KEY_SIG_OPTIONS = Array.from({ length: 15 }, (_, i) => i - 7); // -7..7
-
 const DURATION_NAMES: Record<NoteValue, string> = {
   1: "whole",
   2: "half",
@@ -66,11 +65,6 @@ function clefLabel(clef: string): string {
   if (clef.startsWith("alto")) return "alto";
   if (clef.startsWith("tenor")) return "tenor";
   return clef;
-}
-
-function keySigLabel(fifths: number): string {
-  if (fifths === 0) return "0";
-  return fifths > 0 ? `${fifths}♯` : `${-fifths}♭`;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -610,7 +604,7 @@ export function App() {
       {newFormOpen && (
         <NewScoreForm onCreate={handleNewScore} onCreateSatb={handleNewSatb} onCancel={() => setNewFormOpen(false)} />
       )}
-      <Palettes font={BRAVURA} onApplyAction={editor.applyAction} />
+      <Palettes font={BRAVURA} score={editor.score} cursor={cursor} onApplyAction={editor.applyAction} />
       {helpOpen && <ShortcutsPanel onClose={() => setHelpOpen(false)} />}
       {stavesOpen && editor.score.parts[cursor.partIndex] && (
         <StavesPanel
