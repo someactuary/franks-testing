@@ -17,6 +17,9 @@
   }
 
   .shortcuts-panel,
+  .palette-row,
+  .staves-panel,
+  .new-score-form,
   .toolbar,
   .compare-panel,
   .import-dialog-overlay {

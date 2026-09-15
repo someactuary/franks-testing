@@ -400,3 +400,22 @@ score canvas is custom SVG either way).
   vector outlines, a 2-page InDesign hymnal page in the Maestro font): notes, rhythms,
   keys, meters, pickup, voices correct on checked pages; 414 vs 416 noteheads on the
   hymn; lyrics need Tesseract data (installed). Playback moves to M5.
+- 2026-09-15 (M4 done: PDF import). Audiveris 5.11 behind a local service mounted in
+  the Vite dev server (server/omr-service.ts; setup: scripts/setup-omr.sh); Import PDF…
+  dialog with progress, "Notes only" (default) or "Everything recognized", original
+  page/system breaks kept; Compare panel shows the original PDF page following the
+  cursor, with a plain-language review list (measures the recognizer left short).
+  Engraving: staves spaced by their content (lyric lanes, ledger notes, markings).
+  Verified end to end with the real service on both samples: hymn 8.6 s, piano 90.5 s,
+  noteheads 414 / 1,588, compare panel follows to the last page. Architect fixes from
+  that run: overlapping pdf.js renders garbled the panel; cursor could leave the screen
+  (now full-height layout with its own scroll areas); review text was jargon; the M2
+  palette row and staves panel printed (extra page). 793 tests.
+
+  Carry-overs:
+  - OMR misses 8va lines, some text (tempo, accel.), invents occasional fermatas; the
+    compare panel and "Notes only" are the mitigation. Titles may have OCR slips.
+  - Review list covers padded voices and validation issues only; it can't know about
+    wrong pitches. A side-by-side overlay or measure-level highlight would help.
+  - The PDF is kept in memory only (lost on reload); scans untested (only digital PDFs).
+  - Playback moved to M5.

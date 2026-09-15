@@ -644,3 +644,9 @@ body {
 .import-dialog-actions button:hover {
   background: #e8e8e8;
 }
+
+/* The compare panel scrolls as a whole; its parts (PDF page, nav, review list) keep
+   their natural height instead of being squeezed to fit the panel. */
+.compare-panel > * {
+  flex-shrink: 0;
+}
