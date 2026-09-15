@@ -9,8 +9,7 @@ import type { ChangeEvent } from "react";
 import type { OmrJob, OmrStatus } from "@/io/omr-api";
 import { cancelOmrJob, fetchOmrResult, getOmrStatus, pollOmrJob, submitOmrJob } from "@/io/omr-client";
 import { importMusicXml, MusicXmlError } from "@/io/musicxml";
-// TEMPORARY: swap this one import for "@/io/omr-cleanup" once it lands (same name/signature).
-import { cleanupOmrScore } from "@/ui/stub-omr-cleanup";
+import { cleanupOmrScore } from "@/io/omr-cleanup";
 import type { OmrCleanupOptions, OmrReviewItem } from "@/io/omr-cleanup";
 import type { Score } from "@/model";
 

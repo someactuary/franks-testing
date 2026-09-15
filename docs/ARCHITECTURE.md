@@ -230,3 +230,19 @@ Pipeline: PDF → local OMR service → .mxl → `importMusicXml` → `cleanupOm
 - Sample PDFs live in `sample_sheet_music/` (gitignored, third-party). Tests may use them
   only when present (`describe.skipIf`), and must never copy lyric text or other text from
   them into the repo: assert counts and structure only.
+
+### Staff spacing internals (M4)
+Engraving runs horizontal layout once, then the vertical passes twice
+(`layoutSystems(slotsOf, withFrame)` in engrave.ts): a first pass with staves 1000 sp
+apart and no frame, `measureStaffExtents` (src/engraving/staff-spacing.ts) to measure
+each staff's ink above and below its lines, then `staffSlots(parts, settings, extents)`
+(vertical.ts) and a second pass that draws everything, including brace/bracket, labels
+and barlines, at the final positions. Every system carries its own staff positions in
+`EmitSystem.slots`; `buildSites(systems)` and the skyline read them. Known limits: one
+tall item anywhere widens the whole system; the brace indent is sized from the default
+spacing; the rule assumes no item sits more than 500 sp from its staff.
+
+### Running OMR tests
+`npm test` skips the real-Audiveris test. Run it on purpose with
+`PMN_OMR_REAL=1 npx vitest run server/omr-real-run.test.ts` (needs Audiveris and the
+local sample PDF).

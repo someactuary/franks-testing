@@ -59,7 +59,8 @@ async function pollJob(baseUrl: string, id: string, onUpdate: (job: OmrJob) => v
   }
 }
 
-describe.skipIf(!hasAudiveris || !hasSample)("OMR real run: the_spirit_of_god_eng.pdf", () => {
+// Opt-in: PMN_OMR_REAL=1 npx vitest run server/omr-real-run.test.ts (needs Audiveris + the local sample).
+describe.skipIf(!hasAudiveris || !hasSample || process.env.PMN_OMR_REAL !== "1")("OMR real run: the_spirit_of_god_eng.pdf", () => {
   it(
     "runs the real Audiveris pipeline end to end and cleans up the result",
     async () => {
