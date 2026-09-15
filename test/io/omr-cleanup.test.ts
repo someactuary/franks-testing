@@ -169,7 +169,7 @@ describe("cleanupOmrScore: review items", () => {
     const padded = review.filter((r) => r.reason === "padded-voice");
     expect(padded).toHaveLength(1);
     expect(padded[0]).toMatchObject({ measureIndex: 0, staffIndex: 0, reason: "padded-voice" });
-    expect(padded[0]!.detail).toMatch(/1\/4/);
+    expect(padded[0]!.detail).toMatch(/a quarter note of time was missing/);
   });
 
   it("does not flag an ordinary whole-measure rest as padding", () => {

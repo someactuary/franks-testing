@@ -162,7 +162,7 @@ function collectPaddedVoiceReviews(score: Score): OmrReviewItem[] {
             measureIndex,
             staffIndex,
             reason: "padded-voice",
-            detail: `${fracToString(total)} of a whole note was padded with invisible rests across ${voicesPadded} voice${voicesPadded === 1 ? "" : "s"} (backup/forward left a gap the OMR pass didn't fill)`,
+            detail: `${describeLength(total)} of time was missing${voicesPadded > 1 ? ` in ${voicesPadded} voices` : ""} and has been filled with hidden rests; check this measure against the PDF`,
           });
         }
       }
@@ -217,6 +217,24 @@ function collectValidationReviews(score: Score): OmrReviewItem[] {
 }
 
 // ---------------------------------------------------------------------------
+
+/** A length of musical time in words a musician reads at a glance: "an eighth note", "a dotted quarter note". */
+function describeLength(f: Fraction): string {
+  const names: Record<string, string> = {
+    "1/1": "a whole note",
+    "3/4": "a dotted half note",
+    "1/2": "a half note",
+    "3/8": "a dotted quarter note",
+    "1/4": "a quarter note",
+    "3/16": "a dotted eighth note",
+    "1/8": "an eighth note",
+    "3/32": "a dotted sixteenth note",
+    "1/16": "a sixteenth note",
+    "1/32": "a thirty-second note",
+    "1/64": "a sixty-fourth note",
+  };
+  return names[fracToString(f)] ?? `${fracToString(f)} of a whole note`;
+}
 
 export function cleanupOmrScore(score: Score, opts: OmrCleanupOptions): OmrCleanupResult {
   const clone = structuredClone(score);

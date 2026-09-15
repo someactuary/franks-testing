@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { LayoutResult, Ref } from "@/engraving/layout-types";
 import { renderPages } from "@/render/svg";
@@ -112,6 +112,18 @@ interface PitchDragState {
  * (ghost outline snapped to the nearest staff step, `onDragPitch` on release
  * if it moved), an empty-space click, or an empty-space rubber-band drag.
  */
+/**
+ * The element that actually scrolls `el` into view: the nearest ancestor whose content
+ * overflows and whose overflow-y lets it scroll, else the document itself.
+ */
+function scrollParentOf(el: HTMLElement): Element {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return document.scrollingElement ?? document.documentElement;
+}
+
 export function ScoreView({
   layout,
   font,
@@ -139,6 +151,32 @@ export function ScoreView({
       }),
     [layout, font, idAttributes],
   );
+
+  // Keep the cursor's system on screen: when the cursor moves to a measure that is
+  // scrolled out of view (arrow keys, ⌘→, a review item in the compare panel), scroll
+  // the score container just enough to show that system.
+  const cursorMeasure = cursor?.measureIndex;
+  useEffect(() => {
+    if (cursorMeasure === undefined) return;
+    const loc = findSystemForMeasure(layout, cursorMeasure);
+    if (!loc) return;
+    const pageEl = pageRefs.current[loc.page.index];
+    const svg = pageEl?.querySelector("svg");
+    if (!pageEl || !svg) return;
+    const scroller = scrollParentOf(pageEl);
+    const svgRect = svg.getBoundingClientRect();
+    const pxPerSp = svgRect.height / loc.page.heightSp;
+    const margin = 24;
+    const top = svgRect.top + (loc.system.y - 4) * pxPerSp - margin;
+    const bottom = svgRect.top + (loc.system.y + loc.system.height + 4) * pxPerSp + margin;
+    const view = scroller === document.scrollingElement
+      ? { top: 0, bottom: window.innerHeight }
+      : scroller.getBoundingClientRect();
+    let delta = 0;
+    if (top < view.top) delta = top - view.top;
+    else if (bottom > view.bottom) delta = Math.min(bottom - view.bottom, top - view.top);
+    if (delta !== 0) scroller.scrollBy({ top: delta, behavior: "smooth" });
+  }, [cursorMeasure, layout]);
 
   const cursorLine = useMemo(() => {
     if (!cursor || !entryActive) return null;

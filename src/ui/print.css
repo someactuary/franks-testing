@@ -8,6 +8,14 @@
     background: #fff;
   }
 
+  /* Undo the full-height screen layout so every page prints, not just one viewport. */
+  .app,
+  .workspace,
+  .workspace main {
+    height: auto;
+    overflow: visible;
+  }
+
   .shortcuts-panel,
   .toolbar,
   .compare-panel,

@@ -97,22 +97,41 @@ export function ComparePanel({
   const cursorPage = pdfPageForMeasure(pageBreaks, cursorMeasureIndex);
   const displayPage = clamp(followCursor ? cursorPage : manualPage, 0, Math.max(0, numPages - 1));
 
+  // pdf.js refuses to start a render on a canvas that is still rendering, which is
+  // exactly what happens when the cursor jumps several pages quickly or the panel
+  // resizes mid-render (the page then stays blank or garbled). So every render is
+  // chained after the previous one has been cancelled and has settled.
+  const renderTaskRef = useRef<{ cancel(): void; promise: Promise<unknown> } | null>(null);
+
   useEffect(() => {
     if (!doc || containerWidth <= 0) return;
     let cancelled = false;
-    void doc.getPage(displayPage + 1).then(async (page) => {
-      if (cancelled) return;
-      const unscaled = page.getViewport({ scale: 1 });
-      const scale = containerWidth / unscaled.width;
-      const viewport = page.getViewport({ scale });
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const ctx = canvas.getContext("2d");
-      if (!ctx || cancelled) return;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-    });
+    const previous = renderTaskRef.current;
+    previous?.cancel();
+    const settled = previous ? previous.promise.catch(() => undefined) : Promise.resolve();
+    void settled
+      .then(() => (cancelled ? null : doc.getPage(displayPage + 1)))
+      .then(async (page) => {
+        if (!page || cancelled) return;
+        const unscaled = page.getViewport({ scale: 1 });
+        const scale = containerWidth / unscaled.width;
+        const viewport = page.getViewport({ scale });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx || cancelled) return;
+        const task = page.render({ canvasContext: ctx, viewport });
+        renderTaskRef.current = task;
+        try {
+          await task.promise;
+        } catch {
+          // RenderingCancelledException from a newer render replacing this one.
+        } finally {
+          if (renderTaskRef.current === task) renderTaskRef.current = null;
+        }
+      });
     return () => {
       cancelled = true;
     };
