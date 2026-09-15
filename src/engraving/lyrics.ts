@@ -164,7 +164,7 @@ export function emitLyrics(systems: EmitSystem[], ctx: EmitContext): SystemExten
   const extents: SystemExtent[] = systems.map(() => ({ above: 0, below: 0 }));
 
   for (const [systemIndex, sys] of systems.entries()) {
-    const skylines = buildSkyline(sys.primitives, ctx.slots, ctx.font);
+    const skylines = buildSkyline(sys.primitives, sys.slots, ctx.font);
     for (const [slotIndex] of ctx.slots.entries()) {
       const sk = skylines[slotIndex];
       if (!sk) continue;

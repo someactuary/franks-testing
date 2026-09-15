@@ -201,12 +201,12 @@ function push(pass: Pass, systemIndex: number, prim: Primitive): void {
  * reaches above and below the system origin.
  */
 export function emitSpanners(systems: EmitSystem[], ctx: EmitContext): SystemExtent[] {
-  const index = buildSites(systems, ctx.slots);
+  const index = buildSites(systems);
   const pass: Pass = {
     ctx,
     index,
     // Rebuilt here, so it already contains everything attachments.ts drew.
-    skylines: systems.map((s) => buildSkyline(s.primitives, ctx.slots, ctx.font)),
+    skylines: systems.map((s) => buildSkyline(s.primitives, s.slots, ctx.font)),
     extents: systems.map(() => ({ above: 0, below: 0 })),
     systems,
     dynamics: [],

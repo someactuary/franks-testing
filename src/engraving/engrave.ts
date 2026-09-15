@@ -2,7 +2,9 @@
  * `engrave(score, { font }) => LayoutResult` — the M0 orchestration.
  *
  * Pipeline: semantic pass (semantic.ts) → horizontal spacing (spacing.ts) →
- * line breaking (breaking.ts) → vertical layout (vertical.ts) → primitives.
+ * line breaking (breaking.ts) → justification → primitives on provisional staff
+ * positions → per-staff extents (staff-spacing.ts) → content-aware staff
+ * positions (vertical.ts) → primitives again at those positions → pagination.
  *
  * M2 scope: several voices per staff, tuplets, staff groups and staff names.
  * Still missing: spanners, attachments, grace notes, cross-staff notes.
@@ -51,7 +53,15 @@ import {
   type TieEndpoint,
   type TiePair,
 } from "./ties";
-import { pageMetrics, paginate, staffSlots, staffSpan, type StaffSlot } from "./vertical";
+import { measureStaffExtents } from "./staff-spacing";
+import {
+  pageMetrics,
+  paginate,
+  provisionalSlots,
+  staffSlots,
+  staffSpan,
+  type StaffSlot,
+} from "./vertical";
 
 export interface EngraveOptionsInput {
   font: SmuflFontData;
@@ -74,6 +84,25 @@ interface PreparedMeasure {
   start: MeasureSpacing;
 }
 
+/** A system's horizontal layout: final before any vertical decision is made. */
+interface SystemFrame {
+  systemIndex: number;
+  plan: SystemPlan;
+  width: number;
+  /** Justified spacing of each measure of this system, parallel to `plan.measures`. */
+  spacings: MeasureSpacing[];
+  measures: MeasureLayout[];
+}
+
+/** A system with its staves placed and everything drawn. */
+interface BuiltSystem extends SystemFrame {
+  /** Where this system's staves sit (system coordinates). */
+  slots: StaffSlot[];
+  primitives: Primitive[];
+  above: number;
+  below: number;
+}
+
 function clefAtMeasureStart(sm: StaffMeasure | undefined, running: ClefKind): ClefKind {
   // M0 only honours clef changes at the very start of a measure.
   const change = sm?.clefChanges?.find((c) => c.at.num === 0);
@@ -85,6 +114,9 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   const defaults = font.engravingDefaults;
   const settings = score.settings;
   const metrics = pageMetrics(settings);
+  // Default staff positions. They identify the staves (part/staff per slot index)
+  // for every pass and size the brace indent; each system's actual positions are
+  // decided in step 4.
   const slots = staffSlots(score.parts, settings);
   const span = staffSpan(slots);
 
@@ -177,19 +209,9 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     pageBreaks: score.layout?.pageBreaks ?? [],
   });
 
-  // --- 3. build every system ----------------------------------------------
-  interface BuiltSystem {
-    plan: SystemPlan;
-    width: number;
-    /** Justified spacing of each measure of this system, parallel to `plan.measures`. */
-    spacings: MeasureSpacing[];
-    primitives: Primitive[];
-    measures: MeasureLayout[];
-    above: number;
-    below: number;
-  }
-
-  const built: BuiltSystem[] = plans.map((plan, systemIndex) => {
+  // --- 3. horizontal layout of every system --------------------------------
+  // Justification fixes every x once; nothing below moves anything sideways.
+  const frames: SystemFrame[] = plans.map((plan, systemIndex) => {
     const spacings = plan.measures.map((mi, i) =>
       i === 0 ? prepared[mi]!.start : prepared[mi]!.mid,
     );
@@ -201,74 +223,99 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
         : Math.max(natural, availableWidth);
     justifySystem(spacings, target);
     const width = spacings.reduce((a, m) => a + m.width, 0);
-
-    const primitives: Primitive[] = [];
-    emitSystemFrame(primitives, {
-      parts: score.parts,
-      slots,
-      width,
-      font,
-      systemIndex,
-      firstMeasureId: spacings[0]?.measureId ?? score.id,
-    });
-    for (const [i, m] of spacings.entries()) {
-      const p = prepared[plan.measures[i]!]!;
-      emitMeasure(primitives, {
-        font,
-        defaults,
-        slots,
-        spacing: m,
-        prepared: p,
-        showMeasureNumber: i === 0 && p.number > 1,
-      });
-    }
-
     return {
+      systemIndex,
       plan,
       width,
       spacings,
-      primitives,
       measures: spacings.map((m) => ({
         measureIndex: m.measureIndex,
         x: m.x,
         width: m.width,
         columns: m.columns.map((c) => ({ offset: c.offset, x: m.x + c.x })),
       })),
-      above: 0,
-      below: 0,
     };
   });
 
-  // Ties can span systems, so they are drawn once every system's x positions are
-  // final — and before the vertical extents, which must cover their arcs.
-  emitTies(built, { defaults, slots, ties: ties.pairs });
-
-  // Attachments and spanners read the primitives above as a skyline and stack
-  // themselves outside it, so they run last and report their own extents.
+  // --- 4. vertical layout: staves spaced by content -------------------------
+  // A staff's position depends on how far its neighbours' content reaches, which
+  // is only known once that content is placed. So every system is laid out
+  // twice: first with the staves so far apart that nothing can collide, to
+  // measure each staff's extents (staff-spacing.ts); then for real, at the
+  // positions those extents call for (vertical.ts). Every placement rule reads
+  // the staff's own y, so the second pass reproduces the first one staff by
+  // staff; the frame (brace, bracket, labels) and the barlines are built from
+  // the final positions only.
   const expressiveCtx = { score, font, defaults, slots };
-  const attachExtents = emitAttachments(built, expressiveCtx);
-  // Lyrics claim the lane below each staff, outside whatever attachments placed
-  // there, and before the spanners so a slur can still tuck above the words.
-  const lyricExtents = emitLyrics(built, expressiveCtx);
-  const spannerExtents = emitSpanners(built, expressiveCtx);
+  const layoutSystems = (
+    slotsOf: (systemIndex: number) => StaffSlot[],
+    withFrame: boolean,
+  ): BuiltSystem[] => {
+    const built: BuiltSystem[] = frames.map((frame) => {
+      const sysSlots = slotsOf(frame.systemIndex);
+      const primitives: Primitive[] = [];
+      if (withFrame) {
+        emitSystemFrame(primitives, {
+          parts: score.parts,
+          slots: sysSlots,
+          width: frame.width,
+          font,
+          systemIndex: frame.systemIndex,
+          firstMeasureId: frame.spacings[0]?.measureId ?? score.id,
+        });
+      }
+      for (const [i, m] of frame.spacings.entries()) {
+        const p = prepared[frame.plan.measures[i]!]!;
+        emitMeasure(primitives, {
+          font,
+          defaults,
+          slots: sysSlots,
+          spacing: m,
+          prepared: p,
+          showMeasureNumber: i === 0 && p.number > 1,
+        });
+      }
+      return { ...frame, slots: sysSlots, primitives, above: 0, below: 0 };
+    });
 
-  for (const [i, b] of built.entries()) {
-    const ext = verticalExtent(b.primitives, font, span);
-    b.above = Math.max(
-      ext.above,
-      attachExtents[i]?.above ?? 0,
-      lyricExtents[i]?.above ?? 0,
-      spannerExtents[i]?.above ?? 0,
-    );
-    b.below = Math.max(
-      ext.below,
-      attachExtents[i]?.below ?? 0,
-      lyricExtents[i]?.below ?? 0,
-      spannerExtents[i]?.below ?? 0,
-    );
-  }
+    // Ties can span systems, so they are drawn once every system's x positions are
+    // final — and before the vertical extents, which must cover their arcs.
+    emitTies(built, { defaults, ties: ties.pairs });
 
-  // --- 4. pagination -------------------------------------------------------
+    // Attachments and spanners read the primitives above as a skyline and stack
+    // themselves outside it, so they run last and report their own extents.
+    const attachExtents = emitAttachments(built, expressiveCtx);
+    // Lyrics claim the lane below each staff, outside whatever attachments placed
+    // there, and before the spanners so a slur can still tuck above the words.
+    const lyricExtents = emitLyrics(built, expressiveCtx);
+    const spannerExtents = emitSpanners(built, expressiveCtx);
+
+    for (const [i, b] of built.entries()) {
+      const ext = verticalExtent(b.primitives, font, staffSpan(b.slots));
+      b.above = Math.max(
+        ext.above,
+        attachExtents[i]?.above ?? 0,
+        lyricExtents[i]?.above ?? 0,
+        spannerExtents[i]?.above ?? 0,
+      );
+      b.below = Math.max(
+        ext.below,
+        attachExtents[i]?.below ?? 0,
+        lyricExtents[i]?.below ?? 0,
+        spannerExtents[i]?.below ?? 0,
+      );
+    }
+    return built;
+  };
+
+  const provisional = provisionalSlots(score.parts);
+  const trial = layoutSystems(() => provisional, false);
+  const finalSlots = trial.map((t) =>
+    staffSlots(score.parts, settings, measureStaffExtents(t.primitives, t.slots, font)),
+  );
+  const built = layoutSystems((i) => finalSlots[i]!, true);
+
+  // --- 5. pagination -------------------------------------------------------
   const hasTitleBlock = Boolean(score.meta.title ?? score.meta.subtitle ?? score.meta.composer);
   const placements = paginate(
     built.map((b) => ({ above: b.above, below: b.below, startsPage: b.plan.startsPage })),
@@ -296,7 +343,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
       y: place.y,
       width: b.width,
       height: b.above + b.below,
-      staves: slots.map<StaffLayout>((s) => ({
+      staves: b.slots.map<StaffLayout>((s) => ({
         partIndex: s.partIndex,
         staffIndex: s.staffIndex,
         y: s.y,
@@ -795,6 +842,7 @@ interface TieSystem {
   width: number;
   spacings: MeasureSpacing[];
   primitives: Primitive[];
+  slots: StaffSlot[];
 }
 
 interface TieSite {
@@ -814,7 +862,7 @@ interface TieSite {
  */
 function emitTies(
   systems: TieSystem[],
-  input: { defaults: EngravingDefaults; slots: StaffSlot[]; ties: TiePair[] },
+  input: { defaults: EngravingDefaults; ties: TiePair[] },
 ): void {
   if (input.ties.length === 0) return;
 
@@ -829,10 +877,11 @@ function emitTies(
   const site = (ep: TieEndpoint): TieSite | undefined => {
     const loc = located.get(ep.measureIndex);
     if (!loc) return undefined;
-    const slotIndex = input.slots.findIndex(
+    const sysSlots = systems[loc.systemIndex]!.slots;
+    const slotIndex = sysSlots.findIndex(
       (s) => s.partIndex === ep.partIndex && s.staffIndex === ep.staffIndex,
     );
-    const slot = input.slots[slotIndex];
+    const slot = sysSlots[slotIndex];
     const staff = slotIndex < 0 ? undefined : loc.spacing.staves[slotIndex];
     if (!slot || !staff) return undefined;
     const ev = staff.events.find((e) => e.event.id === ep.eventId);

@@ -4,6 +4,16 @@
  *
  * System coordinates have their origin at the top line of the system's first
  * staff, so the first staff always has y = 0.
+ *
+ * Staves are spaced by content (docs/ARCHITECTURE.md, "M4 contracts: Engraving
+ * fix"): the gap between the facing lines of staff k and staff k+1 is
+ *
+ *     max(default gap, below(k) + above(k+1) + interStaffClearanceSp)
+ *
+ * where below/above are how far everything drawn for a staff reaches past its
+ * own bottom/top line (see staff-spacing.ts). engrave.ts measures those extents
+ * on a provisional layout (`provisionalSlots`) and then lays each system out
+ * again at the positions `staffSlots` returns for them.
  */
 import type { EngravingSettings, Part } from "@/model/score";
 import { ENGRAVING } from "./constants";
@@ -14,28 +24,84 @@ export interface StaffSlot {
   staffIndex: number;
   /** y of the staff's top line in system coordinates. */
   y: number;
+  /**
+   * The vertical band this staff owns for skyline purposes (skyline.ts). When
+   * absent the band reaches half way to the neighbouring staves. Content-spaced
+   * slots set it to the middle of the clear space between the two staves' ink,
+   * so ink is always attributed to the staff it was drawn for.
+   */
+  zoneTop?: number;
+  zoneBottom?: number;
+}
+
+/** How far a staff's ink reaches past its own lines, in sp (both >= 0). */
+export interface StaffExtent {
+  /** Above the top line. */
+  above: number;
+  /** Below the bottom line. */
+  below: number;
 }
 
 /**
- * Staff positions inside a system. Staves within a part are `grandStaffGapSp`
- * apart (measured between the facing staff lines); parts are separated by
- * `systemGapSp`.
+ * Staff positions inside a system. Without `extents`, staves within a part are
+ * `grandStaffGapSp` apart (measured between the facing staff lines) and parts
+ * `systemGapSp` apart. With `extents` (one per slot), a gap grows to
+ * `below(k) + above(k+1) + interStaffClearanceSp` when that is larger, and each
+ * slot's skyline zone ends in the middle of the clear space.
  */
-export function staffSlots(parts: Part[], settings: EngravingSettings): StaffSlot[] {
+export function staffSlots(
+  parts: Part[],
+  settings: EngravingSettings,
+  extents?: readonly StaffExtent[],
+): StaffSlot[] {
   const slots: StaffSlot[] = [];
   let y = 0;
   for (const [partIndex, part] of parts.entries()) {
-    if (partIndex > 0) y += STAFF_HEIGHT + settings.systemGapSp;
     for (const [staffIndex] of part.staves.entries()) {
-      if (staffIndex > 0) y += STAFF_HEIGHT + settings.grandStaffGapSp;
-      slots.push({ partIndex, staffIndex, y });
+      const i = slots.length;
+      if (i === 0) {
+        slots.push({ partIndex, staffIndex, y });
+        continue;
+      }
+      const fallback = staffIndex > 0 ? settings.grandStaffGapSp : settings.systemGapSp;
+      if (!extents) {
+        y += STAFF_HEIGHT + fallback;
+        slots.push({ partIndex, staffIndex, y });
+        continue;
+      }
+      const below = extents[i - 1]?.below ?? 0;
+      const above = extents[i]?.above ?? 0;
+      const need = below + above + ENGRAVING.interStaffClearanceSp;
+      const gap = need > fallback ? need : fallback;
+      const prevBottom = y + STAFF_HEIGHT;
+      y += STAFF_HEIGHT + gap;
+      // The boundary between the two staves' zones: the middle of the space that
+      // neither staff's ink reaches into.
+      const boundary = prevBottom + below + (gap - below - above) / 2;
+      slots[i - 1]!.zoneBottom = boundary;
+      slots.push({ partIndex, staffIndex, y, zoneTop: boundary });
+    }
+  }
+  return slots;
+}
+
+/**
+ * Staff positions for the provisional pass: staves so far apart that nothing
+ * drawn for one can reach another, so every piece of ink is attributed to the
+ * staff it belongs to and each staff's extents can be measured in isolation.
+ */
+export function provisionalSlots(parts: Part[]): StaffSlot[] {
+  const slots: StaffSlot[] = [];
+  for (const [partIndex, part] of parts.entries()) {
+    for (const [staffIndex] of part.staves.entries()) {
+      slots.push({ partIndex, staffIndex, y: slots.length * ENGRAVING.provisionalStaffPitchSp });
     }
   }
   return slots;
 }
 
 /** Distance from the first staff's top line to the last staff's bottom line. */
-export function staffSpan(slots: StaffSlot[]): number {
+export function staffSpan(slots: readonly StaffSlot[]): number {
   if (slots.length === 0) return STAFF_HEIGHT;
   return slots[slots.length - 1]!.y + STAFF_HEIGHT;
 }
