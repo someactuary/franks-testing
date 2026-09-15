@@ -10,12 +10,17 @@ import type { Score } from "@/model";
 import { allEvents, findEvent } from "@/model/traverse";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { importMusicXml, exportMusicXml, MusicXmlError } from "@/io/musicxml";
+import type { OmrReviewItem } from "@/io/omr-cleanup";
+import { frac } from "@/model/duration";
 import { DEFAULT_ENTRY_STATE } from "@/input/types";
 import type { KeyStroke, MidiNoteOn } from "@/input/types";
 import { FIXTURES } from "../../test/fixtures";
 import { ScoreView } from "./ScoreView";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { StavesPanel } from "./StavesPanel";
+import { ImportPdfDialog } from "./ImportPdfDialog";
+import type { ImportedFromOmr } from "./ImportPdfDialog";
+import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { newSatbScore } from "./presets";
 import { useEditorStore } from "./store";
@@ -190,6 +195,12 @@ export function App() {
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [stavesOpen, setStavesOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  // The imported PDF's bytes and the OMR review list, kept for the "Compare with
+  // PDF" panel — in memory only, never persisted (docs/ARCHITECTURE.md "M4 contracts").
+  const [pdfSession, setPdfSession] = useState<{ bytes: ArrayBuffer; filename: string } | null>(null);
+  const [omrReview, setOmrReview] = useState<OmrReviewItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initialScore = useMemo(() => newPianoScore(), []);
@@ -456,6 +467,32 @@ export function App() {
     [editor],
   );
 
+  const handleOmrImported = useCallback(
+    (result: ImportedFromOmr) => {
+      editor.loadScore(result.score);
+      setOmrReview(result.review);
+      setPdfSession(result.pdfBytes ? { bytes: result.pdfBytes, filename: result.pdfFilename } : null);
+      setImportOpen(false);
+      setIoMessage(null);
+      setSampleName("");
+    },
+    [editor],
+  );
+
+  const handleReviewClick = useCallback(
+    (item: OmrReviewItem) => {
+      editor.setSelection({ ids: [] });
+      editor.setCursor({
+        partIndex: 0,
+        measureIndex: item.measureIndex,
+        staffIndex: item.staffIndex,
+        voiceIndex: 0,
+        offset: frac(0),
+      });
+    },
+    [editor],
+  );
+
   const cursor = editor.cursor;
   const currentStaffDef = editor.score.parts[cursor.partIndex]?.staves[cursor.staffIndex];
   const clef = currentStaffDef ? clefLabel(currentStaffDef.initialClef) : "?";
@@ -512,6 +549,18 @@ export function App() {
         </button>
         <button type="button" onClick={() => setStavesOpen((v) => !v)} aria-pressed={stavesOpen}>
           Staves
+        </button>
+        <button type="button" onClick={() => setImportOpen(true)}>
+          Import PDF…
+        </button>
+        <button
+          type="button"
+          onClick={() => setCompareOpen((v) => !v)}
+          aria-pressed={compareOpen}
+          disabled={!pdfSession}
+          title={pdfSession ? "Toggle the original-PDF compare panel" : "Import a PDF this session to enable comparing"}
+        >
+          Compare with PDF
         </button>
         <label>
           Samples:{" "}
@@ -570,20 +619,33 @@ export function App() {
           onClose={() => setStavesOpen(false)}
         />
       )}
-      <main>
-        <ScoreView
-          layout={layout}
-          font={BRAVURA}
-          idAttributes
-          cursor={editor.cursor}
-          selection={editor.selection}
-          entryActive={editor.entry.active && !lyricInfo}
-          onClickElement={handleClickElement}
-          onClickEmpty={handleClickEmpty}
-          onSelectMany={handleSelectMany}
-          onDragPitch={handleDragPitch}
-        />
-      </main>
+      <div className={`workspace${compareOpen && pdfSession ? " workspace-with-compare" : ""}`}>
+        <main>
+          <ScoreView
+            layout={layout}
+            font={BRAVURA}
+            idAttributes
+            cursor={editor.cursor}
+            selection={editor.selection}
+            entryActive={editor.entry.active && !lyricInfo}
+            onClickElement={handleClickElement}
+            onClickEmpty={handleClickEmpty}
+            onSelectMany={handleSelectMany}
+            onDragPitch={handleDragPitch}
+          />
+        </main>
+        {compareOpen && pdfSession && (
+          <ComparePanel
+            pdfBytes={pdfSession.bytes}
+            pageBreaks={editor.score.layout.pageBreaks}
+            cursorMeasureIndex={cursor.measureIndex}
+            review={omrReview}
+            onReviewClick={handleReviewClick}
+            onClose={() => setCompareOpen(false)}
+          />
+        )}
+      </div>
+      {importOpen && <ImportPdfDialog onClose={() => setImportOpen(false)} onImported={handleOmrImported} />}
       <footer className="status-bar">
         {lyricInfo ? (
           <span className="lyric-status">

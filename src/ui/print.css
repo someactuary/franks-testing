@@ -9,8 +9,15 @@
   }
 
   .shortcuts-panel,
-  .toolbar {
+  .toolbar,
+  .compare-panel,
+  .import-dialog-overlay {
     display: none;
+  }
+
+  .workspace,
+  .workspace-with-compare {
+    display: block;
   }
 
   .page-stack {

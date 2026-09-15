@@ -313,3 +313,22 @@ export function idsInRect(layout: LayoutResult, font: SmuflFontData, pageIndex: 
   }
   return Array.from(ids);
 }
+
+// ---------------------------------------------------------------------------
+// pdfPageForMeasure
+// ---------------------------------------------------------------------------
+
+/**
+ * Which page of the *original PDF* a given measure came from, for the OMR
+ * compare panel (docs/ARCHITECTURE.md "M4 contracts"). `pageBreaks` is
+ * `score.layout.pageBreaks` — measure indices where a new page starts, i.e.
+ * a break entry `b` means "page increments at measure `b`". The result is
+ * 0-based: the count of break entries at or before `measureIndex`.
+ */
+export function pdfPageForMeasure(pageBreaks: readonly number[], measureIndex: number): number {
+  let page = 0;
+  for (const b of pageBreaks) {
+    if (b <= measureIndex) page++;
+  }
+  return page;
+}
