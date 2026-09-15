@@ -394,3 +394,9 @@ score canvas is custom SVG either way).
   - Pedal line vs lyrics collision possible (lyrics excluded from the skyline).
   - Only voice 0 carries directions on MusicXML export.
   - Earlier carry-overs still open: courtesy key signature at system end, text metrics.
+- 2026-09-15: Frank re-scoped M4 from playback to PDF import ("pull PDF sheet music in
+  so I can re-arrange it"): staves, key signatures, notes first; other markings if easy.
+  Evaluated Audiveris 5.11 on his two samples (a 9-page piano arrangement exported as
+  vector outlines, a 2-page InDesign hymnal page in the Maestro font): notes, rhythms,
+  keys, meters, pickup, voices correct on checked pages; 414 vs 416 noteheads on the
+  hymn; lyrics need Tesseract data (installed). Playback moves to M5.

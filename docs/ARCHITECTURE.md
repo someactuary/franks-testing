@@ -193,3 +193,40 @@ Validate with the W3C schema (github.com/w3c/musicxml, `schema/musicxml.xsd` plu
 `xlink.xsd` and `xml.xsd`, imports pointed at the local copies):
 `xmllint --noout --schema musicxml.xsd <dir>/*.musicxml`. As of 2026-09-14 all 16 exports
 and the 3 corpus files validate. Not yet opened in MuseScore (not installed here).
+
+## M4 contracts: PDF import (OMR)
+
+Recognition is done by **Audiveris** (open source, Java, bundled runtime), installed at
+`~/Applications/Audiveris.app` (or `/Applications`, or `$PMN_AUDIVERIS`), with Tesseract
+English data in `~/Library/Application Support/AudiverisLtd/audiveris/tessdata/`.
+`scripts/setup-omr.sh` installs both idempotently. Evaluated 2026-09-15 on two digital
+PDFs: pitches, rhythms, keys, meters, pickups, clefs and voices correct on every page
+checked; without OCR data, lyric glyphs are misread as dynamics/trills, so OCR data is
+required.
+
+Pipeline: PDF → local OMR service → .mxl → `importMusicXml` → `cleanupOmrScore` → editor.
+
+- **Service** (`server/omr-service.ts`): framework-free `(req, res, next)` handler mounted by
+  a Vite plugin in `vite.config.ts` (`configureServer`), so it exists wherever
+  `npm run dev` runs; the dev server listens on localhost only. Spawns Audiveris with an
+  argument array (never a shell): `-batch -export -output <jobDir> -- <jobDir>/input.pdf`.
+  One job runs at a time (FIFO queue); job dirs under `.omr-jobs/` (gitignored), removed
+  on DELETE or 1 h after completion; 10-minute timeout per job. Uploads: max 50 MB, magic
+  bytes must be `%PDF`, PNG or JPEG. Progress comes from the Audiveris log (sheet count
+  and per-sheet completion). API types in `src/io/omr-api.ts`.
+- **Client** (`src/io/omr-client.ts`): fetch wrappers + polling.
+- **Cleanup** (`src/io/omr-cleanup.ts`, pure): options keep essentials/all and keep layout;
+  drops generic part/staff names ("Voice", "Piano", "P1", "Part 1", "Staff 1", "MusicXML
+  Part"); when keepLayout is false clears systemBreaks/pageBreaks; produces a review list
+  (voices the importer padded with invisible rests, overfull voices, validation issues).
+- **UI**: "Import PDF…" → status check (setup hint if Audiveris missing) → upload →
+  progress → options (essentials default, keep layout default on) → load. A "Compare"
+  side panel renders the original PDF page with pdf.js (kept in memory for the session),
+  synced to the page containing the cursor's measure via `layout.pageBreaks`; review items
+  listed with click-to-jump.
+- **Engraving fix**: staves inside a system are spaced by content: the gap between staff k
+  and k+1 is max(default gap, below-extent of k + above-extent of k+1 + 1.5 sp), where
+  extents include lyric lanes, dynamics, ledger-line notes, beams and slurs.
+- Sample PDFs live in `sample_sheet_music/` (gitignored, third-party). Tests may use them
+  only when present (`describe.skipIf`), and must never copy lyric text or other text from
+  them into the repo: assert counts and structure only.
