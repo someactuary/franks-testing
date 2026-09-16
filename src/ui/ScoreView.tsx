@@ -183,9 +183,20 @@ export function ScoreView({
   // Keep the cursor's system on screen: when the cursor moves to a measure that is
   // scrolled out of view (arrow keys, ⌘→, a review item in the compare panel), scroll
   // the score container just enough to show that system.
+  //
+  // `layout` is a brand new object on every edit (src/engraving/engrave.ts always
+  // returns a fresh result), so it has to stay a dependency here (its own doc-comment
+  // rule: a value an effect reads belongs in its dependency array). Without the guard
+  // below, that means ANY edit anywhere in the score — say, dragging a marking to
+  // nudge it — would re-run this effect and jump the view back to wherever the cursor
+  // currently sits, which usually isn't what the user was just looking at. So the
+  // effect first checks whether the cursor's measure genuinely changed since the last
+  // time it actually scrolled for one, and does nothing when it hasn't.
+  const lastScrolledMeasure = useRef<number | undefined>(undefined);
   const cursorMeasure = cursor?.measureIndex;
   useEffect(() => {
-    if (cursorMeasure === undefined) return;
+    if (cursorMeasure === undefined || cursorMeasure === lastScrolledMeasure.current) return;
+    lastScrolledMeasure.current = cursorMeasure;
     const loc = findSystemForMeasure(layout, cursorMeasure);
     if (!loc) return;
     const pageEl = pageRefs.current[loc.page.index];

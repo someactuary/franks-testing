@@ -322,11 +322,10 @@ the whole beamed group"; there is no "delete a beam" (re-beaming would need a ne
 **What's deletable**: `deleteSelection` (step-entry.ts, used by Delete/Backspace and
 Cmd+X) checks each selected id against `score.spanners`/`score.attachments` by id first
 (→ `removeSpanner`/`removeAttachment`, also clearing any nudge for that id) before
-falling back to the existing note/event erase path. A note's own articulations,
-fingering, ornaments etc. don't have this — they delete only as a side effect of
-deleting the whole note (documented gap, not silently dropped: making a single
-articulation glyph independently removable would need it to carry its own id, distinct
-from the other articulations on the same note, which no ref currently does).
+falling back to the existing note/event erase path. See "Delete strips a tie/decoration
+before erasing the note" below for what that erase path itself does before it actually
+erases anything. Fingering still has no removal path of its own — clearing it goes
+through the fingering palette/action, not Delete.
 
 **What's movable**: `MOVABLE_ROLES` — spanners and placement-only attachments that carry
 their own id independent of any note (slur, hairpin, pedal, ottava, dynamic, tempo,
@@ -348,3 +347,45 @@ from `MOVABLE_ROLES` (multiple articulations on one note share one id — there'
 single thing to move). But a fermata is its own `Attachment` with its own id, so it
 belongs in `MOVABLE_ROLES` — discovered by testing the actual drag in a browser and
 finding it silently did nothing, which the shared role masked.
+
+## Marking drag autoscroll, and delete-strips-decorations (2026-09-16)
+
+Two bugs reported against Frank's real "Be Still, My Soul" file, both in the markings
+work above.
+
+**Bug 1 — dragging a marking scrolled the page away.** `ScoreView`'s cursor-follow
+effect (`useEffect` scrolling the container so the text cursor's system stays in view)
+was keyed on `[cursorMeasure, layout]`. `layout` is a brand-new object on every score
+edit (`engrave.ts` always returns a fresh result), so *any* edit — including dragging a
+marking to nudge it — re-ran the effect and scrolled back to wherever the cursor
+happened to be, often a different page than the one being edited. Fixed by keeping
+`layout` as a dependency (it's genuinely read inside the effect) but adding a
+`lastScrolledMeasure` ref that makes the effect a no-op unless `cursorMeasure` itself
+has changed since the last time it actually scrolled — so a layout-identity change with
+no real cursor movement (a nudge, or any other edit) no longer triggers a scroll.
+Keyboard/compare-panel navigation, which does change `cursorMeasure`, is unaffected.
+Verified live against the real file: dragging a slur now leaves scroll position
+untouched (confirmed pixel-identical before/after), while 400 consecutive ArrowRight
+presses still autoscrolls as before.
+
+**Bug 2 — Delete on a marking erased the whole note.** Selection carries only ids, no
+role — so once a click resolved to, say, a tie or an accent (both of which reuse their
+host note *event's* id, since neither has an id of its own), `deleteSelection` had no
+way to tell "delete this decoration" apart from "delete this note," and always erased
+the note. Root-caused against Frank's real file: several slurs in measures 67–79
+visually overlap a tie curve closely enough that a click resolves to the tie instead
+(same id-sharing mechanism as ties/articulations generally, not a hit-testing bug to
+fix on its own — see "What's selectable" above). Fixed in `eraseSelected`
+(step-entry.ts): before erasing a resolved note event, it now checks whether that event
+has any tied notes (`Note.tieStart`) or note-level decorations (articulations,
+ornaments, arpeggio, tremolo — the new `clearEventDecorations` in
+`commands/notation.ts`) and, if so, strips those instead of erasing the event, leaving
+a status message ("Removed the tie/marking — press Delete again to remove the note").
+A second Delete on the now-undecorated note erases it normally. Verified live against
+the real file at measures 67–79: selecting a tied chord's tie and pressing Delete
+untied all three notes in the chord and left them in place; selecting an accent and
+pressing Delete removed just the accent; a second Delete erased the note both times.
+Carry-over: this strips *all* of an event's note-level decorations at once — e.g. an
+accent and an ornament on the same note both go on the first Delete — not one at a
+time; there's no way to target a single one without its own id, same limitation noted
+under "What's movable."

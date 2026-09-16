@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { newPianoScore, note, rest, type Attachment, type Spanner } from "@/model";
 import {
   addAttachment,
+  clearEventDecorations,
   addSpanner,
   eventAnchor,
   locateEventAnchor,
@@ -149,5 +150,46 @@ describe("locateEventAnchor", () => {
   it("returns undefined for an unknown event id", () => {
     const score = newPianoScore({ measureCount: 1 });
     expect(locateEventAnchor(score, "nope")).toBeUndefined();
+  });
+});
+
+describe("clearEventDecorations", () => {
+  it("removes articulations, ornaments, arpeggio and tremolo from a note event", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const ev = note("C4", 4);
+    ev.articulations = ["staccato", "accent"];
+    ev.ornaments = ["trill"];
+    ev.arpeggio = "up";
+    ev.tremolo = 2;
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [ev, rest(4), rest(2)];
+
+    const next = produce(score, (d) => clearEventDecorations(ev.id).apply(d));
+
+    const result = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items[0]!;
+    expect(result).toMatchObject({ kind: "note" });
+    expect(result.kind === "note" && result.articulations).toBeUndefined();
+    expect(result.kind === "note" && result.ornaments).toBeUndefined();
+    expect(result.kind === "note" && result.arpeggio).toBeUndefined();
+    expect(result.kind === "note" && result.tremolo).toBeUndefined();
+    // The note itself, and its pitch, are untouched.
+    expect(result.kind === "note" && result.notes[0]!.pitch).toEqual({ step: "C", alter: 0, octave: 4 });
+  });
+
+  it("is a no-op on a rest, and on a note with no decorations", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const ev = note("D4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [ev, rest(4), rest(2)];
+
+    const next = produce(score, (d) => clearEventDecorations(ev.id).apply(d));
+    expect(next).toEqual(score);
+
+    const restEvent = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items[1]!;
+    const next2 = produce(score, (d) => clearEventDecorations(restEvent.id).apply(d));
+    expect(next2).toEqual(score);
+  });
+
+  it("throws nothing and does nothing for an id that doesn't exist", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    expect(() => produce(score, (d) => clearEventDecorations("no-such-id").apply(d))).not.toThrow();
   });
 });

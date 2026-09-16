@@ -455,3 +455,26 @@ score canvas is custom SVG either way).
   - Large nudges can overlap neighbouring content (applied after extent measurement).
   - Text/line/path hit boxes use estimates (no real font metrics; a safe convex-hull
     bound for bezier paths), same limitation as engraving's own text spacing.
+- 2026-09-16 (fix: marking-drag autoscroll jump + Delete erasing the whole note).
+  Implemented directly; both reported against Frank's real "Be Still, My Soul" file.
+  Root cause 1: ScoreView's cursor-follow scroll effect depended on `layout`, which is
+  a fresh object on every edit, so dragging a marking (an edit) re-ran it and jumped
+  the view back to the cursor's page. Fixed with a `lastScrolledMeasure` ref that skips
+  the scroll unless `cursorMeasure` itself actually changed. Root cause 2: Selection
+  carries only ids, no role, so a click resolving to a tie or an articulation (both
+  share their host note event's id, having none of their own) left `deleteSelection`
+  unable to tell "erase this decoration" from "erase this note" — it always erased the
+  note. Confirmed live: several slurs in measures 67-79 visually overlap a tie closely
+  enough that a click resolves to the tie. Fixed in `eraseSelected` (step-entry.ts):
+  before erasing a note event, it now strips any tied notes and note-level decorations
+  (new `clearEventDecorations` in commands/notation.ts) instead, with a status message,
+  and only erases the event on a second Delete once nothing is left to strip. 859 tests
+  (8 new), lint/typecheck/build clean. Verified live against the real file: dragging a
+  slur no longer moves the scroll position at all (pixel-identical before/after); a
+  tied chord's tie and a lone accent each survive one Delete with the decoration gone
+  and a second Delete erases the note; 400 ArrowRight presses still autoscrolls
+  normally (no navigation regression).
+
+  Carry-over: stripping removes all of an event's note-level decorations in one step
+  (e.g. an accent and an ornament on the same note both go together), not one at a
+  time — same "no per-decoration id" limitation as the carry-over above.

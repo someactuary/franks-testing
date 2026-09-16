@@ -74,6 +74,30 @@ export function removeSpanner(id: Id): Command {
  * every one that lacks it if ANY of them lacks it, otherwise (all already have it)
  * removes it from all of them.
  */
+/**
+ * Clears every note-level decoration on event `eventId` that has no id of its own
+ * (articulations, ornaments, arpeggio, tremolo — see docs/ARCHITECTURE.md's
+ * "Selectable markings": these share the event's id, unlike a fermata or a spanner,
+ * so there's nothing more specific to remove them by). A no-op on a rest, or on a
+ * note event that carries none of these. Ties are handled separately (`toggleTie`
+ * operates per note, not per event) — see `deleteSelection` in step-entry.ts, which
+ * uses both together so pressing Delete on a decorated note strips its decorations
+ * before it ever erases the note itself.
+ */
+export function clearEventDecorations(eventId: Id): Command {
+  return {
+    label: "Clear note decorations",
+    apply(draft) {
+      const hit = locateEvent(draft, eventId);
+      if (!hit || hit.event.kind !== "note") return;
+      delete hit.event.articulations;
+      delete hit.event.ornaments;
+      delete hit.event.arpeggio;
+      delete hit.event.tremolo;
+    },
+  };
+}
+
 export function toggleArticulation(eventIds: readonly Id[], articulation: Articulation): Command {
   return {
     label: "Toggle articulation",

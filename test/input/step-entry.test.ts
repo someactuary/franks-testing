@@ -1006,3 +1006,98 @@ describe("Delete/Backspace on a selected marking (slur/hairpin/dynamic/etc.)", (
     expect(h.history.current.attachments).toHaveLength(0);
   });
 });
+
+describe("Delete/Backspace strips a tie/decorations before ever erasing the note", () => {
+  // Regression: measures 67-79 of a real imported file had dense, overlapping slurs
+  // and ties. Clicking near a slur sometimes resolves to a TIE instead (ties always
+  // ref their start note's own id — see ties.ts), and a tie's id is indistinguishable
+  // from "the user selected the note itself." Before this fix, Delete on that
+  // selection erased the whole note. Now it removes the tie first.
+  it("Delete on a tied note removes the tie (not the note), keeps it selected, and a second Delete then erases it", () => {
+    const score = newPianoScore({ measureCount: 2 });
+    const a = note("C4", 4);
+    a.notes[0]!.tieStart = true;
+    const b = note("C4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [a, b, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [a.notes[0]!.id] };
+
+    const result1 = h.press({ key: "Delete" });
+
+    const voice1 = h.voiceItems();
+    expect(voice1[0]).toMatchObject({ kind: "note", notes: [{ id: a.notes[0]!.id, tieStart: false }] });
+    expect(h.selection.ids).toEqual([a.notes[0]!.id]); // stays selected
+    expect(result1?.message).toMatch(/press Delete again/i);
+
+    h.press({ key: "Delete" });
+
+    const voice2 = h.voiceItems();
+    expect(voice2[0]).toMatchObject({ kind: "rest" }); // now genuinely erased
+  });
+
+  it("Delete on a note with an accent (or any articulation) clears it instead of erasing the note", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const ev = note("C4", 4);
+    ev.articulations = ["accent"];
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    h.press({ key: "Delete" });
+
+    const voice = h.voiceItems();
+    expect(voice[0]).toMatchObject({ kind: "note" }); // still a note
+    expect((voice[0] as typeof ev).articulations).toBeUndefined();
+    expect(h.selection.ids).toEqual([ev.notes[0]!.id]);
+  });
+
+  it("Delete on a note with BOTH a tie and an articulation strips both in one press", () => {
+    const score = newPianoScore({ measureCount: 2 });
+    const a = note("C4", 4);
+    a.notes[0]!.tieStart = true;
+    a.articulations = ["tenuto"];
+    const b = note("C4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [a, rest(4), rest(2)];
+    score.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items = [b, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [a.notes[0]!.id] };
+
+    h.press({ key: "Delete" });
+
+    const voice = h.voiceItems();
+    expect(voice[0]).toMatchObject({ kind: "note", notes: [{ tieStart: false }] });
+    expect((voice[0] as typeof a).articulations).toBeUndefined();
+  });
+
+  it("Delete on a plain note (no tie, no decorations) still erases immediately, as before", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const ev = note("C4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [ev, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [ev.notes[0]!.id] };
+
+    const result = h.press({ key: "Delete" });
+
+    expect(h.voiceItems()[0]).toMatchObject({ kind: "rest" });
+    expect(h.selection.ids).toEqual([]);
+    expect(result?.message).toBeUndefined();
+  });
+
+  it("a mixed selection strips the decorated note and erases the plain one, keeping only the decorated one selected", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const decorated = note("C4", 4);
+    decorated.articulations = ["staccato"];
+    const plain = note("D4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [decorated, plain, rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [decorated.notes[0]!.id, plain.notes[0]!.id] };
+
+    h.press({ key: "Delete" });
+
+    const voice = h.voiceItems();
+    expect(voice[0]).toMatchObject({ kind: "note" }); // decorated note survives, stripped
+    expect((voice[0] as typeof decorated).articulations).toBeUndefined();
+    expect(voice[1]).toMatchObject({ kind: "rest" }); // plain note erased
+    expect(h.selection.ids).toEqual([decorated.notes[0]!.id]);
+  });
+});

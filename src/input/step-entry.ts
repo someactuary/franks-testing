@@ -35,7 +35,7 @@ import {
 } from "@/commands/edit";
 import { setLyric, setLyricExtend } from "@/commands/lyrics";
 import { clearNudge } from "@/commands/layout";
-import { removeAttachment, removeSpanner } from "@/commands/notation";
+import { clearEventDecorations, removeAttachment, removeSpanner } from "@/commands/notation";
 import type { Command } from "@/commands/types";
 import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
@@ -159,17 +159,53 @@ function copiedMessage(clipboard: ClipboardContent): string {
 
 /**
  * Erases every event in the current selection (deduplicated by event id), earliest
- * first. Returns the commands plus the cursor position of the earliest erased event
- * (undefined if the selection resolved to nothing, e.g. only stale ids).
+ * first — except a note that carries a tie and/or decorations with no id of their own
+ * (articulations, ornaments, arpeggio, tremolo — see `clearEventDecorations`), which
+ * only has those stripped, not erased: a tie and a slur look alike, ties always
+ * resolve (by design — see ties.ts) to their start note's own id, and that note's own
+ * id is indistinguishable from "the user meant to select the note itself" once it's
+ * just an id in `Selection`. Stripping first rather than erasing outright means a
+ * click that lands on a tie/decoration instead of the marking the user actually meant
+ * can never destroy a note by surprise: Delete again, now genuinely plain, erases it.
+ * Returns the commands, the cursor position of the earliest affected event
+ * (undefined if the selection resolved to nothing, e.g. only stale ids), a message
+ * when anything was stripped rather than erased, and `keptIds`: the selection ids of
+ * every stripped (not erased) note — an erased event's id no longer exists afterwards
+ * (`eraseEvent` replaces it with a fresh rest), but a stripped one is the very same
+ * note, so re-selecting it is exactly keeping these ids selected. The caller uses
+ * `keptIds` instead of clearing the selection, so a second Delete on the same
+ * selection reaches the now-plain note and actually erases it.
  */
-function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Cursor } {
+function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Cursor; message?: string; keptIds: string[] } {
   const { score, selection } = state;
   const resolved = resolveSelection(score, selection);
-  if (resolved.length === 0) return { commands: [] };
+  if (resolved.length === 0) return { commands: [], keptIds: [] };
   const sorted = resolved
     .map((r) => ({ ...r, absolute: absoluteOffset(score, r.measureIndex, r.offset) }))
     .sort((a, b) => cmp(a.absolute, b.absolute));
-  const commands = sorted.map((r) => eraseEvent(r.event.id));
+
+  const commands: Command[] = [];
+  const keptIds: string[] = [];
+  let strippedEvents = 0;
+  for (const r of sorted) {
+    const event = r.event;
+    const tiedNoteIds = event.kind === "note" ? event.notes.filter((n) => n.tieStart).map((n) => n.id) : [];
+    const hasDecorations =
+      event.kind === "note" &&
+      ((event.articulations?.length ?? 0) > 0 ||
+        (event.ornaments?.length ?? 0) > 0 ||
+        event.arpeggio !== undefined ||
+        event.tremolo !== undefined);
+    if (tiedNoteIds.length > 0 || hasDecorations) {
+      for (const noteId of tiedNoteIds) commands.push(toggleTie(noteId));
+      if (hasDecorations) commands.push(clearEventDecorations(event.id));
+      keptIds.push(...idsForEvent(event));
+      strippedEvents++;
+    } else {
+      commands.push(eraseEvent(event.id));
+    }
+  }
+
   const first = sorted[0]!;
   const cursor: Cursor = {
     partIndex: first.partIndex,
@@ -178,7 +214,13 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
     voiceIndex: first.voiceIndex,
     offset: first.offset,
   };
-  return { commands, cursor };
+  const message =
+    strippedEvents === 0
+      ? undefined
+      : strippedEvents === sorted.length
+        ? "Removed the tie/marking — press Delete again to remove the note"
+        : "Removed a tie/marking from one note — press Delete again to remove it";
+  return { commands, cursor, ...(message ? { message } : {}), keptIds };
 }
 
 /**
@@ -190,7 +232,9 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
  * `layout.nudges` doesn't accumulate entries for markings that no longer exist.
  * Everything else in the selection still goes through `eraseSelected`.
  */
-function deleteSelection(state: EditorState): { commands: Command[]; cursor?: Cursor } {
+function deleteSelection(
+  state: EditorState,
+): { commands: Command[]; cursor?: Cursor; message?: string; keptIds: string[] } {
   const { score, selection } = state;
   const spannerIds = new Set(score.spanners.map((s) => s.id));
   const attachmentIds = new Set(score.attachments.map((a) => a.id));
@@ -206,7 +250,12 @@ function deleteSelection(state: EditorState): { commands: Command[]; cursor?: Cu
     if (score.layout.nudges[id]) commands.push(clearNudge(id));
   }
   const erased = eraseSelected({ ...state, selection: { ids: remaining } });
-  return { commands: [...commands, ...erased.commands], ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+  return {
+    commands: [...commands, ...erased.commands],
+    ...(erased.cursor ? { cursor: erased.cursor } : {}),
+    ...(erased.message ? { message: erased.message } : {}),
+    keptIds: erased.keptIds,
+  };
 }
 
 /** Cursor + event-boundary navigation shared by ArrowLeft/ArrowRight. Crosses measures; stops at score ends. */
@@ -604,7 +653,12 @@ export const handleKey: KeyHandler = (state, key) => {
     const hasCopyableEvent = resolveSelection(state.score, state.selection).length > 0;
     if (!hasCopyableEvent) {
       const erased = deleteSelection(state);
-      return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+      return {
+        commands: erased.commands,
+        selection: { ids: erased.keptIds },
+        ...(erased.cursor ? { cursor: erased.cursor } : {}),
+        ...(erased.message ? { message: erased.message } : {}),
+      };
     }
     const clipboard = copySelection(state);
     if (!clipboard) return { commands: [], message: "Cannot copy tuplets yet" };
@@ -612,8 +666,9 @@ export const handleKey: KeyHandler = (state, key) => {
     return {
       commands: erased.commands,
       clipboard,
-      selection: { ids: [] },
+      selection: { ids: erased.keptIds },
       ...(erased.cursor ? { cursor: erased.cursor } : {}),
+      ...(erased.message ? { message: erased.message } : {}),
     };
   }
   if (key.mod && lower === "v") {
@@ -663,7 +718,12 @@ export const handleKey: KeyHandler = (state, key) => {
   // The entry-mode erase-at-cursor behaviour below only applies when nothing is selected.
   if (!key.mod && (key.key === "Backspace" || key.key === "Delete") && state.selection.ids.length > 0) {
     const erased = deleteSelection(state);
-    return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+    return {
+      commands: erased.commands,
+      selection: { ids: erased.keptIds },
+      ...(erased.cursor ? { cursor: erased.cursor } : {}),
+      ...(erased.message ? { message: erased.message } : {}),
+    };
   }
 
   // With entry OFF and something selected, duration digits / "." apply straight to the
