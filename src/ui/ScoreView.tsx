@@ -4,7 +4,17 @@ import type { LayoutResult, Ref } from "@/engraving/layout-types";
 import { renderPages } from "@/render/svg";
 import type { SmuflFontData } from "@/render/smufl/types";
 import type { Cursor, Selection } from "@/input/types";
-import { cursorX, findSystemForMeasure, idsInRect, selectionBoxes, staffY, type Rect } from "./layout-utils";
+import {
+  cursorX,
+  findSystemForMeasure,
+  hitTestElement,
+  idsInRect,
+  MOVABLE_ROLES,
+  selectionBoxes,
+  staffY,
+  type ElementHit,
+  type Rect,
+} from "./layout-utils";
 
 export interface ClickModifiers {
   shift: boolean;
@@ -29,6 +39,8 @@ export interface ScoreViewProps {
   onSelectMany?: (ids: string[], additive: boolean) => void;
   /** Fired when a notehead drag completes with a non-zero vertical movement. */
   onDragPitch?: (noteId: string, diatonicDelta: number) => void;
+  /** Fired when dragging a movable marking (see `MOVABLE_ROLES`) completes with a non-zero movement; `dx`/`dy` are the drag's own delta in page-space sp, to be added to whatever offset the marking already has. */
+  onDragMarking?: (id: string, dx: number, dy: number) => void;
 }
 
 const CURSOR_COLOR = "#2f7cf6";
@@ -54,9 +66,10 @@ const DRAG_THRESHOLD_SP = 0.3;
 
 /** Vertical distance (sp) of one diatonic staff step (half a staff space), per docs/ARCHITECTURE.md. */
 const STAFF_STEP_SP = 0.5;
-const PITCH_DRAG_COLOR = "#e67e22";
-const PITCH_DRAG_STROKE_SP = 0.12;
-const PITCH_DRAG_DASH = "0.2,0.16";
+/** Shared "in-progress positional edit" ghost style, for both notehead pitch-drag and marking nudge-drag. */
+const DRAG_GHOST_COLOR = "#e67e22";
+const DRAG_GHOST_STROKE_SP = 0.12;
+const DRAG_GHOST_DASH = "0.2,0.16";
 
 /** Converts a client-space point to the SVG's own user-space (its viewBox units) via the screen CTM. */
 function clientPointToSvg(svg: SVGSVGElement, clientX: number, clientY: number): { x: number; y: number } | null {
@@ -85,9 +98,11 @@ interface DragStart {
   startY: number;
   shift: boolean;
   mod: boolean;
-  onElement: { id: string; role: Ref["role"] } | null;
+  onElement: ElementHit | null;
   /** The notehead's own bounding box, captured at pointerdown; only set when `onElement.role === "notehead"`. */
   noteBox: Rect | null;
+  /** A movable marking's own bounding box, captured at pointerdown; only set when `onElement.role` is in `MOVABLE_ROLES`. */
+  markingBox: Rect | null;
 }
 
 interface RubberBandState {
@@ -102,15 +117,26 @@ interface PitchDragState {
   diatonicDelta: number;
 }
 
+/** Ghost outline shown while dragging a movable marking to a new position (free, not snapped). */
+interface MarkingDragState {
+  pageIndex: number;
+  box: Rect;
+  dx: number;
+  dy: number;
+}
+
 /**
  * Renders every page of a LayoutResult as inline SVG, stacked vertically,
  * each wrapped for a page-shadow look on screen (see app.css/print.css).
  * Overlays a thin entry cursor (green while voice 2 is active) and rounded
- * selection outlines (around each selected notehead/rest, Noteflight-style)
- * in the existing overlay <svg>; pointer interaction on the page container
- * resolves to an element click (with shift/mod modifiers), a notehead drag
- * (ghost outline snapped to the nearest staff step, `onDragPitch` on release
- * if it moved), an empty-space click, or an empty-space rubber-band drag.
+ * selection outlines (around each selected notehead/rest/marking,
+ * Noteflight-style) in the existing overlay <svg>. Pointer interaction on
+ * the page container is resolved by `hitTestElement` (pure geometry, not DOM
+ * hit-testing — see its own doc comment) to an element click (with shift/mod
+ * modifiers), a notehead drag (ghost outline snapped to the nearest staff
+ * step, `onDragPitch` on release if it moved), a movable-marking drag (free
+ * ghost outline, `onDragMarking` on release if it moved — see
+ * `MOVABLE_ROLES`), an empty-space click, or an empty-space rubber-band drag.
  */
 /**
  * The element that actually scrolls `el` into view: the nearest ancestor whose content
@@ -135,11 +161,13 @@ export function ScoreView({
   onClickEmpty,
   onSelectMany,
   onDragPitch,
+  onDragMarking,
 }: ScoreViewProps) {
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const dragRef = useRef<DragStart | null>(null);
   const [rubberBand, setRubberBand] = useState<RubberBandState | null>(null);
   const [pitchDrag, setPitchDrag] = useState<PitchDragState | null>(null);
+  const [markingDrag, setMarkingDrag] = useState<MarkingDragState | null>(null);
 
   const pageSvgs = useMemo(
     () =>
@@ -210,19 +238,19 @@ export function ScoreView({
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>, pageIndex: number) {
     if (event.button !== 0) return;
-    const target = event.target as Element | null;
-    const withId = target?.closest("[data-id]") ?? null;
-    let onElement: { id: string; role: Ref["role"] } | null = null;
-    if (withId) {
-      const id = withId.getAttribute("data-id");
-      const role = withId.getAttribute("data-role") as Ref["role"] | null;
-      if (id && role) onElement = { id, role };
-    }
     const svg = svgFor(pageIndex);
     if (!svg) return;
     const pt = clientPointToSvg(svg, event.clientX, event.clientY);
     if (!pt) return;
+    // Pure-geometry hit test, not DOM `elementFromPoint`/`closest` — see hitTestElement's
+    // own doc comment for why: every glyph's native hit area is its full font em-box,
+    // not its visible ink, so two glyphs within about a staff's height of each other
+    // (routine for two voices on one staff) would otherwise silently steal each other's
+    // clicks, always favouring whichever was painted later.
+    const onElement = hitTestElement(layout, font, pageIndex, pt.x, pt.y);
     const noteBox = onElement?.role === "notehead" ? (selectionBoxes(layout, font, [onElement.id])[0] ?? null) : null;
+    const markingBox =
+      onElement && MOVABLE_ROLES.has(onElement.role) ? (selectionBoxes(layout, font, [onElement.id])[0] ?? null) : null;
     dragRef.current = {
       pageIndex,
       startX: pt.x,
@@ -231,6 +259,7 @@ export function ScoreView({
       mod: event.metaKey || event.ctrlKey,
       onElement,
       noteBox,
+      markingBox,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -256,6 +285,22 @@ export function ScoreView({
       return;
     }
 
+    // Dragging a movable marking (slur, hairpin, pedal, ottava, dynamic, tempo, text):
+    // a free (not snapped) ghost outline, committed as a `setNudge` on release.
+    if (start.onElement && MOVABLE_ROLES.has(start.onElement.role)) {
+      if (!start.markingBox) return;
+      const svg = svgFor(start.pageIndex);
+      if (!svg) return;
+      const pt = clientPointToSvg(svg, event.clientX, event.clientY);
+      if (!pt) return;
+      const dx = pt.x - start.startX;
+      const dy = pt.y - start.startY;
+      if (!markingDrag && Math.hypot(dx, dy) < DRAG_THRESHOLD_SP) return;
+      const box: Rect = { ...start.markingBox, x: start.markingBox.x + dx, y: start.markingBox.y + dy };
+      setMarkingDrag({ pageIndex: start.pageIndex, box, dx, dy });
+      return;
+    }
+
     if (start.onElement) return; // other element kinds have no drag behaviour yet
 
     const svg = svgFor(start.pageIndex);
@@ -275,10 +320,18 @@ export function ScoreView({
     setRubberBand(null);
     const drag = pitchDrag;
     setPitchDrag(null);
+    const mDrag = markingDrag;
+    setMarkingDrag(null);
     if (!start) return;
 
     if (start.onElement?.role === "notehead" && drag) {
       if (drag.diatonicDelta !== 0) onDragPitch?.(start.onElement.id, drag.diatonicDelta);
+      else onClickElement?.(start.onElement.id, start.onElement.role, { shift: start.shift, mod: start.mod });
+      return;
+    }
+
+    if (start.onElement && MOVABLE_ROLES.has(start.onElement.role) && mDrag) {
+      if (mDrag.dx !== 0 || mDrag.dy !== 0) onDragMarking?.(start.onElement.id, mDrag.dx, mDrag.dy);
       else onClickElement?.(start.onElement.id, start.onElement.role, { shift: start.shift, mod: start.mod });
       return;
     }
@@ -351,9 +404,22 @@ export function ScoreView({
                   height={pitchDrag.box.h + 2 * SELECTION_PADDING_SP}
                   rx={SELECTION_RADIUS_SP}
                   fill="none"
-                  stroke={PITCH_DRAG_COLOR}
-                  strokeWidth={PITCH_DRAG_STROKE_SP}
-                  strokeDasharray={PITCH_DRAG_DASH}
+                  stroke={DRAG_GHOST_COLOR}
+                  strokeWidth={DRAG_GHOST_STROKE_SP}
+                  strokeDasharray={DRAG_GHOST_DASH}
+                />
+              )}
+              {markingDrag && markingDrag.pageIndex === page.index && (
+                <rect
+                  x={markingDrag.box.x - SELECTION_PADDING_SP}
+                  y={markingDrag.box.y - SELECTION_PADDING_SP}
+                  width={markingDrag.box.w + 2 * SELECTION_PADDING_SP}
+                  height={markingDrag.box.h + 2 * SELECTION_PADDING_SP}
+                  rx={SELECTION_RADIUS_SP}
+                  fill="none"
+                  stroke={DRAG_GHOST_COLOR}
+                  strokeWidth={DRAG_GHOST_STROKE_SP}
+                  strokeDasharray={DRAG_GHOST_DASH}
                 />
               )}
               {rubberBand && rubberBand.pageIndex === page.index && (

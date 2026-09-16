@@ -446,3 +446,18 @@ describe("handleAction: manual layout control", () => {
     expect(result?.message).toMatch(/cleared/i);
   });
 });
+
+describe("handleAction: setNudge / clearNudge", () => {
+  it("setNudge writes the given absolute offset to layout.nudges by id", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.act({ kind: "setNudge", id: "slur-1", dx: 0.5, dy: -0.25 });
+    expect(h.history.current.layout.nudges["slur-1"]).toEqual({ dx: 0.5, dy: -0.25 });
+  });
+
+  it("clearNudge removes it", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.act({ kind: "setNudge", id: "slur-1", dx: 0.5, dy: -0.25 });
+    h.act({ kind: "clearNudge", id: "slur-1" });
+    expect(h.history.current.layout.nudges["slur-1"]).toBeUndefined();
+  });
+});

@@ -36,6 +36,7 @@ import {
   type StaffMeasureLayout,
 } from "./semantic";
 import { emitSpanners } from "./spanners";
+import { applyNudges } from "./nudges";
 import {
   buildMeasureSpacing,
   justifySystem,
@@ -315,6 +316,12 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     staffSlots(score.parts, settings, measureStaffExtents(t.primitives, t.slots, font)),
   );
   const built = layoutSystems((i) => finalSlots[i]!, true);
+
+  // Manual positional offsets (docs/ARCHITECTURE.md, "Selectable markings"), after
+  // extents are measured — see nudges.ts's documented limitation on large nudges.
+  if (Object.keys(score.layout?.nudges ?? {}).length > 0) {
+    for (const b of built) b.primitives = applyNudges(b.primitives, score.layout.nudges);
+  }
 
   // --- 5. pagination -------------------------------------------------------
   const hasTitleBlock = Boolean(score.meta.title ?? score.meta.subtitle ?? score.meta.composer);

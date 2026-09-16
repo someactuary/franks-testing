@@ -252,6 +252,7 @@ describe("dynamics, text and tempo", () => {
     const sys = system(run(score));
     const fermata = glyphs(sys.primitives, "fermataAbove")[0]!;
     expect(fermata.y - glyphBox(FONT, "fermataAbove").up).toBeLessThan(staffTop(sys, 0));
+    expect(fermata.ref?.role).toBe("fermata"); // its own role, distinct from real per-note articulations — see docs/ARCHITECTURE.md's "Selectable markings": a fermata has its own attachment id and is independently movable, unlike staccato/tenuto/accent, which share an id with their host note.
     const ped = glyphs(sys.primitives, "keyboardPedalPed")[0]!;
     expect(ped.y - glyphBox(FONT, "keyboardPedalPed").up).toBeGreaterThan(
       staffTop(sys, 1) + STAFF_HEIGHT,

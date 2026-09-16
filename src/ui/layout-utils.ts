@@ -14,7 +14,19 @@
 import { eq, lt, sub, toNumber, ZERO, type Fraction } from "@/model/duration";
 import type { Id, Score } from "@/model";
 import { allEvents, type Event } from "@/model/traverse";
-import type { GlyphPrim, LayoutResult, MeasureLayout, Page, System } from "@/engraving/layout-types";
+import type {
+  GlyphPrim,
+  LayoutResult,
+  LinePrim,
+  MeasureLayout,
+  Page,
+  PathPrim,
+  PolygonPrim,
+  Primitive,
+  Ref,
+  System,
+  TextPrim,
+} from "@/engraving/layout-types";
 import { glyphBBox } from "@/render/smufl";
 import type { SmuflFontData } from "@/render/smufl/types";
 
@@ -243,13 +255,104 @@ export interface Rect {
   h: number;
 }
 
+/** What a click landed on: an id and the role of the primitive that won the hit test. */
+export interface ElementHit {
+  id: Id;
+  role: Ref["role"];
+}
+
+/**
+ * Roles that name an independently addressable model object — safe to select,
+ * outline, hit-test, and (mostly) delete: notes/rests, spanners (slur, tie,
+ * hairpin, pedal, ottava), attachments (dynamic, tempo, text, fermata — each
+ * with its own id, independent of any note), and the note-level marks that
+ * share an id with their host event/note (articulation, fingering, tuplet,
+ * lyric, ornament — a note's real articulations, e.g. staccato+accent
+ * together, share one id and aren't independently addressable from each
+ * other, unlike a fermata, which is its own attachment). Deliberately
+ * excludes purely structural/derived sub-parts of a note (stem, flag, dot,
+ * accidental) and page furniture (clef, keysig, timesig, barline, ledger,
+ * measure) — clicking those selects nothing on their own. "beam" is included
+ * at the lowest priority: a beam has no independent model identity
+ * (docs/ARCHITECTURE.md), so it resolves to the id of its first note, which is
+ * still a useful, better-than-nothing click target.
+ */
+const SELECTABLE_ROLES: ReadonlySet<Ref["role"]> = new Set<Ref["role"]>([
+  "notehead",
+  "rest",
+  "tie",
+  "slur",
+  "hairpin",
+  "pedal",
+  "ottava",
+  "dynamic",
+  "tempo",
+  "text",
+  "fermata",
+  "articulation",
+  "fingering",
+  "tuplet",
+  "lyric",
+  "ornament",
+  "beam",
+]);
+
+/**
+ * Roles worth nudging as a whole (drag to reposition): spanners and
+ * placement-only attachments, which carry their own id independent of any
+ * note. Ties, real articulations, fingering, tuplets and beams share an id
+ * with their host note/event and aren't independently repositionable this way.
+ */
+export const MOVABLE_ROLES: ReadonlySet<Ref["role"]> = new Set<Ref["role"]>([
+  "slur",
+  "hairpin",
+  "pedal",
+  "ottava",
+  "dynamic",
+  "tempo",
+  "text",
+  "fermata",
+]);
+
+/** Smaller wins a tie between two same-size selectable boxes covering a click point. */
+const ROLE_PRIORITY: Partial<Record<Ref["role"], number>> = {
+  notehead: 0,
+  rest: 1,
+  tie: 2,
+  slur: 3,
+  hairpin: 3,
+  pedal: 3,
+  ottava: 3,
+  dynamic: 4,
+  tempo: 4,
+  text: 4,
+  fingering: 4,
+  fermata: 4,
+  articulation: 5,
+  tuplet: 5,
+  lyric: 6,
+  ornament: 6,
+  beam: 9,
+};
+
+/**
+ * No real font metrics exist for text primitives (docs/ARCHITECTURE.md): this
+ * is the same length*size*ratio estimate the engraver itself uses for spacing
+ * (see src/engraving/attachments.ts's and lyrics.ts's own `textWidth`).
+ */
+const TEXT_WIDTH_RATIO = 0.55;
+const TEXT_ASCENT_RATIO = 0.8;
+const TEXT_DESCENT_RATIO = 0.25;
+/** Extra click tolerance around thin line/path shapes (ties, slurs, hairpins, pedal/ottava lines). */
+const LINE_HIT_PAD_SP = 0.25;
+
 /**
  * Page-space bounding box of a notehead/rest glyph primitive, from the SMuFL
  * font's glyph bbox. SMuFL bboxes are y UP relative to the glyph origin;
  * layout/page space is y DOWN, so the vertical extent is flipped: the bbox's
  * `ne` (max y up = visually highest point) becomes the smaller (top) page y.
  */
-function glyphPrimPageBox(prim: GlyphPrim, system: System, font: SmuflFontData): { x: number; y: number; w: number; h: number } {
+function glyphPrimPageBox(prim: GlyphPrim, system: System, font: SmuflFontData): Rect {
   const bbox = glyphBBox(font, prim.glyph);
   const scale = prim.scale ?? 1;
   const left = prim.x + bbox.sw[0] * scale;
@@ -264,12 +367,112 @@ function glyphPrimPageBox(prim: GlyphPrim, system: System, font: SmuflFontData):
   };
 }
 
+function textPrimPageBox(prim: TextPrim, system: System): Rect {
+  const w = Math.max(prim.text.length * prim.size * TEXT_WIDTH_RATIO, prim.size * TEXT_WIDTH_RATIO);
+  const ascent = prim.size * TEXT_ASCENT_RATIO;
+  const descent = prim.size * TEXT_DESCENT_RATIO;
+  const anchor = prim.anchor ?? "start";
+  const left = anchor === "middle" ? prim.x - w / 2 : anchor === "end" ? prim.x - w : prim.x;
+  return { x: system.x + left, y: system.y + prim.y - ascent, w, h: ascent + descent };
+}
+
+function linePrimPageBox(prim: LinePrim, system: System): Rect {
+  const x1 = Math.min(prim.x1, prim.x2) - LINE_HIT_PAD_SP;
+  const x2 = Math.max(prim.x1, prim.x2) + LINE_HIT_PAD_SP;
+  const y1 = Math.min(prim.y1, prim.y2) - LINE_HIT_PAD_SP;
+  const y2 = Math.max(prim.y1, prim.y2) + LINE_HIT_PAD_SP;
+  return { x: system.x + x1, y: system.y + y1, w: x2 - x1, h: y2 - y1 };
+}
+
+function polygonPrimPageBox(prim: PolygonPrim, system: System): Rect | null {
+  if (prim.points.length === 0) return null;
+  const xs = prim.points.map((p) => p[0]);
+  const ys = prim.points.map((p) => p[1]);
+  const x1 = Math.min(...xs);
+  const x2 = Math.max(...xs);
+  const y1 = Math.min(...ys);
+  const y2 = Math.max(...ys);
+  return { x: system.x + x1, y: system.y + y1, w: x2 - x1, h: y2 - y1 };
+}
+
 /**
- * Bounding boxes (page sp coordinates) of the notehead/rest glyph for each
- * requested id. A note id yields the box of its notehead glyph; an event id
- * (a rest) yields the box of its rest glyph. An id with no matching
- * notehead/rest primitive (unknown id, or an id that only labels some other
- * kind of primitive) contributes no box.
+ * A safe (if slightly loose) bound on a path's curve, from every number in
+ * its `d` string taken as (x,y) pairs — for a cubic Bézier, the curve always
+ * lies within the convex hull of its control points, so this can only be as
+ * large as, never smaller than, the true visual extent. Our path data (ties,
+ * slurs — see ties.ts/spanners.ts) only ever uses M/L/C commands with
+ * absolute coordinates, never relative commands or arcs, so every number is
+ * genuinely part of an (x,y) pair in this order.
+ */
+function pathPrimPageBox(prim: PathPrim, system: System): Rect | null {
+  const nums = prim.d.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+  if (nums.length < 2) return null;
+  let x1 = Infinity;
+  let x2 = -Infinity;
+  let y1 = Infinity;
+  let y2 = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = nums[i]!;
+    const y = nums[i + 1]!;
+    if (x < x1) x1 = x;
+    if (x > x2) x2 = x;
+    if (y < y1) y1 = y;
+    if (y > y2) y2 = y;
+  }
+  return {
+    x: system.x + x1 - LINE_HIT_PAD_SP,
+    y: system.y + y1 - LINE_HIT_PAD_SP,
+    w: x2 - x1 + 2 * LINE_HIT_PAD_SP,
+    h: y2 - y1 + 2 * LINE_HIT_PAD_SP,
+  };
+}
+
+/**
+ * Page-space bounding box of any primitive carrying a `ref` whose role is
+ * independently selectable (`SELECTABLE_ROLES`), or null otherwise (not
+ * selectable, or a shape type with no usable geometry). The single place that
+ * knows each `Primitive` variant's real ink extent — shared by
+ * `selectionBoxes` (what to outline), `idsInRect` (rubber-band selection) and
+ * `hitTestElement` (click routing), so all three agree on what a marking's
+ * "hit area" is.
+ */
+function selectablePrimBox(prim: Primitive, system: System, font: SmuflFontData): { ref: Ref; box: Rect } | null {
+  if (prim.type === "staffLines") return null;
+  const ref = prim.ref;
+  if (!ref || !SELECTABLE_ROLES.has(ref.role)) return null;
+  const box = ((): Rect | null => {
+    switch (prim.type) {
+      case "glyph":
+        return glyphPrimPageBox(prim, system, font);
+      case "text":
+        return textPrimPageBox(prim, system);
+      case "line":
+        return linePrimPageBox(prim, system);
+      case "polygon":
+        return polygonPrimPageBox(prim, system);
+      case "path":
+        return pathPrimPageBox(prim, system);
+    }
+  })();
+  return box ? { ref, box } : null;
+}
+
+function unionRect(a: Rect, b: Rect): Rect {
+  const x1 = Math.min(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x + a.w, b.x + b.w);
+  const y2 = Math.max(a.y + a.h, b.y + b.h);
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+/**
+ * Bounding boxes (page sp coordinates) for each requested id, one per system
+ * it appears in (a tie or slur broken across a system break — see
+ * ties.ts/spanners.ts — gets one box per piece, not one box spanning the gap
+ * between them). Every primitive sharing an id within one system (e.g. a
+ * hairpin's two lines, a tempo mark's note-glyph plus two text runs) merges
+ * into a single box. An id with no matching selectable primitive contributes
+ * no box.
  */
 export function selectionBoxes(layout: LayoutResult, font: SmuflFontData, ids: Id[]): SelectionBox[] {
   if (ids.length === 0) return [];
@@ -277,24 +480,24 @@ export function selectionBoxes(layout: LayoutResult, font: SmuflFontData, ids: I
   const boxes: SelectionBox[] = [];
   for (const page of layout.pages) {
     for (const system of page.systems) {
+      const merged = new Map<Id, Rect>();
       for (const prim of system.primitives) {
-        if (prim.type !== "glyph") continue;
-        const ref = prim.ref;
-        if (!ref || (ref.role !== "notehead" && ref.role !== "rest")) continue;
-        if (!wanted.has(ref.id)) continue;
-        boxes.push({ pageIndex: page.index, ...glyphPrimPageBox(prim, system, font) });
+        const hit = selectablePrimBox(prim, system, font);
+        if (!hit || !wanted.has(hit.ref.id)) continue;
+        const existing = merged.get(hit.ref.id);
+        merged.set(hit.ref.id, existing ? unionRect(existing, hit.box) : hit.box);
       }
+      for (const box of merged.values()) boxes.push({ pageIndex: page.index, ...box });
     }
   }
   return boxes;
 }
 
 /**
- * Ids of every notehead/rest primitive on `pageIndex` whose page-space
- * bounding box intersects `rect` (edge-touching only doesn't count).
- * Noteheads contribute their note id, rests their event id; results are
- * deduplicated (a chord's notes are separate primitives/ids; a rest's dots
- * are not selectable and don't contribute).
+ * Ids of every selectable primitive on `pageIndex` whose page-space bounding
+ * box intersects `rect` (edge-touching only doesn't count). Results are
+ * deduplicated (a chord's notes are separate primitives/ids; a marking with
+ * several primitives — e.g. a hairpin's two lines — contributes its id once).
  */
 export function idsInRect(layout: LayoutResult, font: SmuflFontData, pageIndex: number, rect: Rect): Id[] {
   const page = layout.pages[pageIndex];
@@ -302,16 +505,82 @@ export function idsInRect(layout: LayoutResult, font: SmuflFontData, pageIndex: 
   const ids = new Set<Id>();
   for (const system of page.systems) {
     for (const prim of system.primitives) {
-      if (prim.type !== "glyph") continue;
-      const ref = prim.ref;
-      if (!ref || (ref.role !== "notehead" && ref.role !== "rest")) continue;
-      const box = glyphPrimPageBox(prim, system, font);
+      const hit = selectablePrimBox(prim, system, font);
+      if (!hit) continue;
+      const box = hit.box;
       const intersects =
         box.x < rect.x + rect.w && box.x + box.w > rect.x && box.y < rect.y + rect.h && box.y + box.h > rect.y;
-      if (intersects) ids.add(ref.id);
+      if (intersects) ids.add(hit.ref.id);
     }
   }
   return Array.from(ids);
+}
+
+/**
+ * Whichever box's own CENTRE is closest to the click point wins, not whichever box is
+ * smaller: a small decoration (a fingering digit, an articulation dot) can technically
+ * overlap a much bigger neighbour's box near its edge without the click being
+ * anywhere near that decoration's own centre, and a pure smaller-area rule would wrongly
+ * hand the click to it. Distance-to-centre naturally prefers whatever the click is
+ * actually closest to the middle of. Area only breaks a genuine tie (equal distance,
+ * e.g. two boxes centred on the same point), and `ROLE_PRIORITY` breaks that further.
+ */
+function isBetterHit(x: number, y: number, candidate: { ref: Ref; box: Rect }, best: { ref: Ref; box: Rect }): boolean {
+  const dist = (box: Rect) => Math.hypot(x - (box.x + box.w / 2), y - (box.y + box.h / 2));
+  const d = dist(candidate.box);
+  const bestD = dist(best.box);
+  if (d !== bestD) return d < bestD;
+  const area = candidate.box.w * candidate.box.h;
+  const bestArea = best.box.w * best.box.h;
+  if (area !== bestArea) return area < bestArea;
+  return (ROLE_PRIORITY[candidate.ref.role] ?? 8) < (ROLE_PRIORITY[best.ref.role] ?? 8);
+}
+
+/**
+ * What's under a click at page-space (xSp, ySp) on `pageIndex`, using each
+ * primitive's own tight geometry (`selectablePrimBox`) rather than the
+ * browser's native DOM hit-testing.
+ *
+ * This matters, and isn't just a style preference: every glyph is drawn as an
+ * SVG `<text>` at a fixed font-size spanning a full 4-staff-space em-box (see
+ * src/render/svg.ts and docs/ARCHITECTURE.md) — regardless of how little ink
+ * the actual character (say, a notehead) puts on the page. The browser's own
+ * hit-testing for that `<text>` element uses its em-box, not the visible ink,
+ * so two glyphs within about a staff's height of each other — routine for two
+ * voices on one staff, or any dense passage — have overlapping invisible hit
+ * regions, and whichever was painted later always wins. In practice that
+ * silently steals clicks meant for an earlier voice's notes: found by
+ * confirming with a direct `elementFromPoint` probe that a click squarely on
+ * one voice's notehead was being attributed to a same-column note in the
+ * other voice. Rubber-band selection (`idsInRect`) was never affected — it
+ * already used this same real-geometry approach, never DOM hit-testing.
+ *
+ * Among every selectable primitive whose box contains the point, whichever
+ * box's own centre is closest to the point wins (`isBetterHit`) — the most
+ * specific hit, e.g. a notehead beats a sprawling beam polygon or a nearby
+ * decoration's box that merely overlaps this one's edge without the click
+ * being anywhere near ITS centre.
+ */
+export function hitTestElement(
+  layout: LayoutResult,
+  font: SmuflFontData,
+  pageIndex: number,
+  xSp: number,
+  ySp: number,
+): ElementHit | null {
+  const page = layout.pages[pageIndex];
+  if (!page) return null;
+  let best: { ref: Ref; box: Rect } | null = null;
+  for (const system of page.systems) {
+    for (const prim of system.primitives) {
+      const hit = selectablePrimBox(prim, system, font);
+      if (!hit) continue;
+      const { box } = hit;
+      if (xSp < box.x || xSp > box.x + box.w || ySp < box.y || ySp > box.y + box.h) continue;
+      if (!best || isBetterHit(xSp, ySp, hit, best)) best = hit;
+    }
+  }
+  return best ? { id: best.ref.id, role: best.ref.role } : null;
 }
 
 // ---------------------------------------------------------------------------

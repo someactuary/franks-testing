@@ -426,3 +426,32 @@ score canvas is custom SVG either way).
   commands; Key and Layout palette groups. 822 tests (29 new), lint and build clean.
   Verified in the browser on Frank's real sparse-page file: Reflow took it from 15
   pages to 11; a 3-measures-per-line cap on a fresh score rendered exactly 3+3+2.
+- 2026-09-15 (feature: selectable markings + a real click-hit-testing fix). Implemented
+  directly. Root cause of "only one voice selectable" confirmed live with
+  `elementFromPoint`: every glyph's native DOM hit area is its full 4-sp font em-box, not
+  its ink, so close simultaneous notes across two voices had overlapping hit regions
+  with the later-painted voice always winning. Fixed by replacing ScoreView's DOM
+  `closest("[data-id]")` click routing with a pure-geometry `hitTestElement`
+  (src/ui/layout-utils.ts), built on generalized per-primitive-type bounding boxes that
+  also make slurs/ties/hairpins/pedal/ottava/dynamics/tempo/text/fermata/articulations/
+  fingering/tuplets/lyrics/ornaments selectable (not just notes/rests). Added: delete
+  routing for spanners/attachments by id (removeSpanner/removeAttachment before falling
+  back to note erase), and drag-to-nudge for movable markings via a new
+  `layout.nudges` post-processing pass in the engraver (src/engraving/nudges.ts).
+  Verified live: the exact two-voice repro now alternates Voice 1/Voice 2 correctly on
+  every click; a slur can be clicked, outlined and deleted; a fermata can be dragged
+  (confirmed moved on screen and in the persisted nudge) and deleted (nudge cleared).
+  867 -> 852 (net) tests incl. a direct regression test reproducing the original bug
+  through the real engraving+hit-test pipeline. Found and fixed one real scoping bug
+  along the way: fermata shared "articulation"'s role, which is deliberately excluded
+  from MOVABLE_ROLES (multiple articulations share one id) — gave fermata its own Ref
+  role since it has its own independent Attachment id.
+
+  Carry-overs:
+  - Beams have no independent model identity; clicking one selects its first note only.
+  - A single articulation/ornament/fingering mark isn't independently deletable from its
+    host note (no per-decoration id yet) — deleting the note removes them as a side
+    effect. Toggling via the existing palette (toggleArticulation etc.) still works.
+  - Large nudges can overlap neighbouring content (applied after extent measurement).
+  - Text/line/path hit boxes use estimates (no real font metrics; a safe convex-hull
+    bound for bezier paths), same limitation as engraving's own text spacing.

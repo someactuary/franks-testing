@@ -3,6 +3,12 @@
  * system/page breaks and the two global caps (`measuresPerSystem`, `systemsPerPage`)
  * that src/engraving/breaking.ts and vertical.ts honour, subject to what actually
  * fits the page (a cap only ever shortens a line/page, never overflows one).
+ *
+ * Also `setNudge`/`clearNudge`: small positional offsets for individually movable
+ * markings (docs/ARCHITECTURE.md, "Selectable markings"), keyed by the marking's own
+ * id (a Spanner or Attachment id — see `MOVABLE_ROLES` in src/ui/layout-utils.ts) and
+ * applied by the engraver as one last translation of that id's primitives
+ * (src/engraving/engrave.ts's `applyNudges`).
  */
 import type { Command } from "./types";
 
@@ -79,6 +85,31 @@ export function clearForcedBreaks(): Command {
     apply(draft) {
       draft.layout.systemBreaks = [];
       draft.layout.pageBreaks = [];
+    },
+  };
+}
+
+/**
+ * Sets a marking's positional offset (page-space sp, `dx` right, `dy` down) — an
+ * absolute value, replacing any previous nudge for that id, not a delta. A live drag
+ * (src/ui/ScoreView.tsx) computes the new absolute offset itself (previous nudge plus
+ * the drag's own delta) so one drag gesture is one command, one undo step.
+ */
+export function setNudge(id: string, dx: number, dy: number): Command {
+  return {
+    label: "Move marking",
+    apply(draft) {
+      draft.layout.nudges[id] = { dx, dy };
+    },
+  };
+}
+
+/** Removes a marking's positional offset, snapping it back to its computed position. */
+export function clearNudge(id: string): Command {
+  return {
+    label: "Reset marking position",
+    apply(draft) {
+      delete draft.layout.nudges[id];
     },
   };
 }

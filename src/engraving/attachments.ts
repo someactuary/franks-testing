@@ -793,7 +793,7 @@ function emitFermata(
     glyph,
     x,
     y,
-    ref: { id: attachment.id, role: "articulation" },
+    ref: { id: attachment.id, role: "fermata" },
   } satisfies GlyphPrim);
   if (below) addBelow(sk, x, x + box.width, y + box.down);
   else addAbove(sk, x, x + box.width, y - box.up);

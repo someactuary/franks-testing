@@ -86,6 +86,7 @@ export interface Ref {
     | "articulation"
     | "fingering"
     | "tuplet"
+    | "fermata"
     | "ledger"
     | "measure"
     | "lyric"

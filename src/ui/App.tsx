@@ -461,6 +461,22 @@ export function App() {
     [editor],
   );
 
+  // A drag's (dx, dy) is the gesture's own delta; the marking may already carry a
+  // nudge from an earlier drag, so the new absolute offset is that plus this delta
+  // (setNudge takes an absolute value — see src/commands/layout.ts).
+  const handleDragMarking = useCallback(
+    (id: string, dx: number, dy: number) => {
+      const existing = editor.score.layout.nudges[id];
+      editor.applyAction({
+        kind: "setNudge",
+        id,
+        dx: (existing?.dx ?? 0) + dx,
+        dy: (existing?.dy ?? 0) + dy,
+      });
+    },
+    [editor],
+  );
+
   const handleOmrImported = useCallback(
     (result: ImportedFromOmr) => {
       editor.loadScore(result.score);
@@ -626,6 +642,7 @@ export function App() {
             onClickEmpty={handleClickEmpty}
             onSelectMany={handleSelectMany}
             onDragPitch={handleDragPitch}
+            onDragMarking={handleDragMarking}
           />
         </main>
         {compareOpen && pdfSession && (

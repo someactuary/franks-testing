@@ -283,3 +283,68 @@ Requested by Frank after PDF import left a real file with a sparse last page (a
 - Verified end to end on Frank's real 99-measure imported file: clearing its imported
   forced breaks (which had frozen a specific page at "just 4 measures left" after
   earlier measures were removed) took it from 15 pages to 11.
+
+## Selectable markings, and a real click-hit-testing bug (2026-09-15)
+
+Frank reported: slurs/fermatas/beams/other markings couldn't be selected to move or
+delete, and on a staff with multiple voices only one voice was ever selectable.
+
+**Root cause of the multi-voice bug** (confirmed live with `elementFromPoint`, not
+guessed): every glyph is drawn as an SVG `<text>` at a fixed font-size spanning a full
+4-staff-space em-box (src/render/svg.ts), regardless of the actual ink (a notehead is
+~1sp tall). The browser's own DOM hit-testing (`closest("[data-id]")`, which ScoreView
+used to rely on) uses that whole em-box, not the visible glyph — so two glyphs within
+about a staff's height of each other (routine for two voices on one staff) had
+overlapping invisible hit regions, and the later-painted one always won, silently
+stealing clicks meant for an earlier voice's notes. Rubber-band selection was never
+affected — `idsInRect` already used real geometry, never DOM hit-testing.
+
+**The fix, which also delivers marking selection**: `src/ui/layout-utils.ts` gained
+`selectablePrimBox` — real page-space geometry for every `Primitive` type (glyph via
+SMuFL bbox, text via an estimated ink box, line/polygon via their own points, path via
+every (x,y) pair in its `d` string, a safe convex-hull-style over-approximation for the
+cubic Béziers ties/slurs use). `selectionBoxes`/`idsInRect` now use it for every
+`SELECTABLE_ROLES` role, not just notehead/rest, merging a marking's several primitives
+(e.g. a hairpin's two lines) into one outline per system. `ScoreView`'s click routing
+was switched from DOM `closest("[data-id]")` to a new pure `hitTestElement`, which picks
+whichever selectable box's own centre is closest to the click point — the DOM attributes
+(`idAttributes`) still exist for debugging/print but click detection no longer needs them.
+
+**What's selectable** (`SELECTABLE_ROLES`): notes, rests, ties, slurs, hairpins, pedal,
+ottava, dynamics, tempo, text, fermatas, real per-note articulations, fingering,
+tuplets, lyrics, ornaments. Deliberately excludes derived/structural sub-parts (stem,
+flag, dot, accidental, clef, keysig, timesig, barline, ledger, measure) — clicking those
+selects nothing on its own. "beam" resolves to its first note's id (a beam has no
+independent model identity) — a useful, better-than-nothing click target, not "select
+the whole beamed group"; there is no "delete a beam" (re-beaming would need a new
+`NoteEvent.beam` override command, not built here).
+
+**What's deletable**: `deleteSelection` (step-entry.ts, used by Delete/Backspace and
+Cmd+X) checks each selected id against `score.spanners`/`score.attachments` by id first
+(→ `removeSpanner`/`removeAttachment`, also clearing any nudge for that id) before
+falling back to the existing note/event erase path. A note's own articulations,
+fingering, ornaments etc. don't have this — they delete only as a side effect of
+deleting the whole note (documented gap, not silently dropped: making a single
+articulation glyph independently removable would need it to carry its own id, distinct
+from the other articulations on the same note, which no ref currently does).
+
+**What's movable**: `MOVABLE_ROLES` — spanners and placement-only attachments that carry
+their own id independent of any note (slur, hairpin, pedal, ottava, dynamic, tempo,
+text, fermata). Dragging one in ScoreView shows a free (unsnapped) ghost outline and, on
+release, calls `onDragMarking(id, dx, dy)`; App.tsx adds that delta to the marking's
+existing offset (`score.layout.nudges[id]`) and dispatches `setNudge` (absolute value,
+so one drag is one undo step). `src/engraving/nudges.ts`'s `applyNudges` is one
+post-processing pass in engrave.ts, translating every primitive of a nudged id by its
+offset — chosen over threading a nudge into each of the dozen attachment/spanner kinds'
+own placement math. Known limitation: it runs after the system's vertical extent is
+measured, so a large nudge can push content outside the space reserved for it; nudges
+are for small position tweaks, not freely relocating a marking (re-anchor it instead).
+Ties, real articulations, fingering, tuplets and beams share an id with their host
+note/event and aren't independently nudgeable.
+
+**Why fermata has its own `Ref` role**: it used to share `"articulation"` with real
+per-note articulation glyphs (staccato, tenuto, accent), which are correctly excluded
+from `MOVABLE_ROLES` (multiple articulations on one note share one id — there's no
+single thing to move). But a fermata is its own `Attachment` with its own id, so it
+belongs in `MOVABLE_ROLES` — discovered by testing the actual drag in a browser and
+finding it silently did nothing, which the shared role masked.

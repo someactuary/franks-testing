@@ -21,7 +21,15 @@ import {
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
 import { setKeySignature } from "@/commands/keysig";
-import { clearForcedBreaks, setMeasuresPerSystem, setSystemsPerPage, togglePageBreak, toggleSystemBreak } from "@/commands/layout";
+import {
+  clearForcedBreaks,
+  clearNudge,
+  setMeasuresPerSystem,
+  setNudge,
+  setSystemsPerPage,
+  togglePageBreak,
+  toggleSystemBreak,
+} from "@/commands/layout";
 import type { Command } from "@/commands/types";
 import {
   absoluteOffset,
@@ -323,6 +331,12 @@ export const handleAction: ActionHandler = (state, action) => {
 
     case "clearForcedBreaks":
       return { commands: [clearForcedBreaks()], message: "Cleared all forced breaks" };
+
+    case "setNudge":
+      return { commands: [setNudge(action.id, action.dx, action.dy)] };
+
+    case "clearNudge":
+      return { commands: [clearNudge(action.id)] };
 
     default: {
       const _exhaustive: never = action;

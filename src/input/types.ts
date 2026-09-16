@@ -162,7 +162,11 @@ export type PaletteAction =
   | { kind: "togglePageBreak" }
   | { kind: "setMeasuresPerSystem"; value: number | null }
   | { kind: "setSystemsPerPage"; value: number | null }
-  | { kind: "clearForcedBreaks" };
+  | { kind: "clearForcedBreaks" }
+  // Moving a selectable marking (drag in ScoreView, or a future nudge shortcut):
+  // `dx`/`dy` are the new ABSOLUTE offset (see src/commands/layout.ts's setNudge).
+  | { kind: "setNudge"; id: Id; dx: number; dy: number }
+  | { kind: "clearNudge"; id: Id };
 
 export type ActionHandler = (state: EditorState, action: PaletteAction) => KeyResult | null;
 

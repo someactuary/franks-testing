@@ -34,6 +34,8 @@ import {
   writeEvent,
 } from "@/commands/edit";
 import { setLyric, setLyricExtend } from "@/commands/lyrics";
+import { clearNudge } from "@/commands/layout";
+import { removeAttachment, removeSpanner } from "@/commands/notation";
 import type { Command } from "@/commands/types";
 import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
@@ -177,6 +179,34 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
     offset: first.offset,
   };
   return { commands, cursor };
+}
+
+/**
+ * Erases everything in the current selection. A spanner or attachment id (a slur,
+ * hairpin, pedal, ottava, dynamic, tempo, text, fermata, pedal mark — see
+ * `MOVABLE_ROLES`/`SELECTABLE_ROLES` in src/ui/layout-utils.ts) isn't resolved by
+ * `resolveSelection` (note/event only), so it's removed directly by its own id via
+ * `removeSpanner`/`removeAttachment` — clearing any nudge recorded for it too, so
+ * `layout.nudges` doesn't accumulate entries for markings that no longer exist.
+ * Everything else in the selection still goes through `eraseSelected`.
+ */
+function deleteSelection(state: EditorState): { commands: Command[]; cursor?: Cursor } {
+  const { score, selection } = state;
+  const spannerIds = new Set(score.spanners.map((s) => s.id));
+  const attachmentIds = new Set(score.attachments.map((a) => a.id));
+  const commands: Command[] = [];
+  const remaining: string[] = [];
+  for (const id of selection.ids) {
+    if (spannerIds.has(id)) commands.push(removeSpanner(id));
+    else if (attachmentIds.has(id)) commands.push(removeAttachment(id));
+    else {
+      remaining.push(id);
+      continue;
+    }
+    if (score.layout.nudges[id]) commands.push(clearNudge(id));
+  }
+  const erased = eraseSelected({ ...state, selection: { ids: remaining } });
+  return { commands: [...commands, ...erased.commands], ...(erased.cursor ? { cursor: erased.cursor } : {}) };
 }
 
 /** Cursor + event-boundary navigation shared by ArrowLeft/ArrowRight. Crosses measures; stops at score ends. */
@@ -566,9 +596,19 @@ export const handleKey: KeyHandler = (state, key) => {
   }
   if (key.mod && lower === "x") {
     if (state.selection.ids.length === 0) return { commands: [], message: "Nothing selected" };
+    // A selection of markings only (slurs, hairpins, dynamics, ...) has nothing
+    // resolveSelection recognizes as a note/rest, so there's no copy/delete mismatch
+    // risk in skipping the clipboard entirely and just deleting — unlike a selection
+    // that DOES include notes but can't be copied (inside a tuplet), where copying
+    // nothing while still deleting the notes would be a surprising data loss.
+    const hasCopyableEvent = resolveSelection(state.score, state.selection).length > 0;
+    if (!hasCopyableEvent) {
+      const erased = deleteSelection(state);
+      return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
+    }
     const clipboard = copySelection(state);
     if (!clipboard) return { commands: [], message: "Cannot copy tuplets yet" };
-    const erased = eraseSelected(state);
+    const erased = deleteSelection(state);
     return {
       commands: erased.commands,
       clipboard,
@@ -622,7 +662,7 @@ export const handleKey: KeyHandler = (state, key) => {
   // Delete/Backspace with a non-empty selection (any mode): erase every selected event.
   // The entry-mode erase-at-cursor behaviour below only applies when nothing is selected.
   if (!key.mod && (key.key === "Backspace" || key.key === "Delete") && state.selection.ids.length > 0) {
-    const erased = eraseSelected(state);
+    const erased = deleteSelection(state);
     return { commands: erased.commands, selection: { ids: [] }, ...(erased.cursor ? { cursor: erased.cursor } : {}) };
   }
 

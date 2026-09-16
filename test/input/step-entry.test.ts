@@ -919,3 +919,90 @@ describe("handleKey: slur / hairpin / tuplet shortcuts", () => {
     expect(group.ratio.normal).toBe(4);
   });
 });
+
+describe("Delete/Backspace on a selected marking (slur/hairpin/dynamic/etc.)", () => {
+  function scoreWithDynamic(): { score: Score; attachmentId: string; noteId: string } {
+    const score = newPianoScore({ measureCount: 1 });
+    const ev = note("C4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [ev, note("D4", 4), rest(2)];
+    const attachmentId = "dyn-1";
+    score.attachments.push({
+      id: attachmentId,
+      kind: "dynamic",
+      text: "p",
+      partIndex: 0,
+      staffIndex: 0,
+      anchor: { kind: "event", eventId: ev.id },
+    });
+    return { score, attachmentId, noteId: ev.notes[0]!.id };
+  }
+
+  it("Delete on a selected attachment removes it via removeAttachment, not eraseEvent", () => {
+    const { score, attachmentId, noteId } = scoreWithDynamic();
+    const h = new Harness(score);
+    h.selection = { ids: [attachmentId] };
+
+    h.press({ key: "Delete" });
+
+    expect(h.history.current.attachments).toHaveLength(0);
+    // The note the dynamic was anchored to is untouched.
+    const voice = h.history.current.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(voice.some((it) => it.kind === "note" && it.notes[0]!.id === noteId)).toBe(true);
+    expect(h.selection.ids).toEqual([]);
+  });
+
+  it("Backspace on a selected spanner removes it via removeSpanner", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const a = note("C4", 4);
+    const b = note("D4", 4);
+    score.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items = [a, b, rest(2)];
+    score.spanners.push({
+      id: "slur-1",
+      kind: "slur",
+      partIndex: 0,
+      staffIndex: 0,
+      start: { kind: "event", eventId: a.id },
+      end: { kind: "event", eventId: b.id },
+    });
+    const h = new Harness(score);
+    h.selection = { ids: ["slur-1"] };
+
+    h.press({ key: "Backspace" });
+
+    expect(h.history.current.spanners).toHaveLength(0);
+  });
+
+  it("also clears any nudge recorded for the deleted marking", () => {
+    const { score, attachmentId } = scoreWithDynamic();
+    score.layout.nudges[attachmentId] = { dx: 1, dy: 1 };
+    const h = new Harness(score);
+    h.selection = { ids: [attachmentId] };
+
+    h.press({ key: "Delete" });
+
+    expect(h.history.current.layout.nudges[attachmentId]).toBeUndefined();
+  });
+
+  it("a mixed selection (a note plus a marking) deletes both: the marking by id, the note via eraseEvent", () => {
+    const { score, attachmentId, noteId } = scoreWithDynamic();
+    const h = new Harness(score);
+    h.selection = { ids: [attachmentId, noteId] };
+
+    h.press({ key: "Delete" });
+
+    expect(h.history.current.attachments).toHaveLength(0);
+    const voice = h.history.current.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    // The note is replaced by a rest of the same duration (eraseEvent's contract).
+    expect(voice.some((it) => it.kind === "note" && it.notes.some((n) => n.id === noteId))).toBe(false);
+  });
+
+  it("Cmd+X (cut) on a selected marking deletes it (it isn't copyable, so nothing lands on the clipboard for it)", () => {
+    const { score, attachmentId } = scoreWithDynamic();
+    const h = new Harness(score);
+    h.selection = { ids: [attachmentId] };
+
+    h.press({ key: "x", mod: true });
+
+    expect(h.history.current.attachments).toHaveLength(0);
+  });
+});
