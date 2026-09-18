@@ -628,6 +628,13 @@ export const handleKey: KeyHandler = (state, key) => {
     return handleAction(state, { kind: "slur" });
   }
 
+  // "x": flip stem direction (MuseScore's convention) — fixes OMR/import misreads
+  // that pitch editing alone can't touch, since stem direction is otherwise frozen
+  // once set (docs/ARCHITECTURE.md's "Flip stem direction").
+  if (!key.mod && lower === "x") {
+    return handleAction(state, { kind: "flipStem" });
+  }
+
   // "<" / ">" (i.e. shift+"," / shift+"."): crescendo / diminuendo hairpin.
   if (key.key === "<") {
     return handleAction(state, { kind: "hairpin", shape: "cresc" });

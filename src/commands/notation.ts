@@ -120,6 +120,33 @@ export function toggleArticulation(eventIds: readonly Id[], articulation: Articu
   };
 }
 
+/**
+ * Flips the stem direction of every note event in `eventIds`, explicitly overriding
+ * `NoteEvent.stem` (docs/ARCHITECTURE.md's "Flip stem direction"): if every one is
+ * already "up", sets them all to "down"; otherwise (any "down", or no override at
+ * all) sets them all to "up". Converging the whole selection on one direction
+ * (rather than flipping each independently) means selecting an entire beamed run and
+ * flipping it actually moves the beam's shared direction, which is decided by its
+ * first member with an explicit `stem` (src/engraving/semantic.ts's
+ * `buildBeamGroups`) — flipping just one member in the middle of a group a beam
+ * ignores would otherwise look like nothing happened.
+ */
+export function toggleStemDirection(eventIds: readonly Id[]): Command {
+  return {
+    label: "Flip stem direction",
+    apply(draft) {
+      const hits = eventIds
+        .map((id) => locateEvent(draft, id))
+        .filter((h): h is NonNullable<typeof h> => h !== undefined && h.event.kind === "note");
+      if (hits.length === 0) return;
+      const allUp = hits.every((h) => h.event.kind === "note" && h.event.stem === "up");
+      for (const h of hits) {
+        if (h.event.kind === "note") h.event.stem = allUp ? "down" : "up";
+      }
+    },
+  };
+}
+
 /** Sets the fingering digit on note `noteId`, or clears it when `text` is `null`. */
 export function setFingering(noteId: Id, text: string | null): Command {
   return {

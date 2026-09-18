@@ -262,6 +262,13 @@ export function Palettes({ font, score, cursor, onApplyAction }: PalettesProps) 
             <Smufl font={font} glyph={a.glyph} />
           </button>
         ))}
+        <button
+          type="button"
+          title="Flip stem direction (X) — fixes an imported note's stem pointing the wrong way"
+          onClick={() => onApplyAction({ kind: "flipStem" })}
+        >
+          Flip Stem
+        </button>
       </div>
 
       <div className="palette-group" aria-label="Lines">

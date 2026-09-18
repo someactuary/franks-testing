@@ -11,6 +11,7 @@ import {
   removeSpanner,
   setFingering,
   toggleArticulation,
+  toggleStemDirection,
 } from "@/commands/notation";
 
 describe("addAttachment / removeAttachment", () => {
@@ -102,6 +103,76 @@ describe("toggleArticulation", () => {
     const next = produce(score, (draft) => toggleArticulation([r.id, "unknown"], "accent").apply(draft));
 
     expect(next).toBe(score); // no-op: nothing to toggle
+  });
+});
+
+describe("toggleStemDirection", () => {
+  it("flips a single note event from down to up", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const a = note("A4", 4);
+    a.stem = "down";
+    voice.items = [a, rest(4), rest(2)];
+
+    const next = produce(score, (draft) => toggleStemDirection([a.id]).apply(draft));
+
+    const items = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("up");
+  });
+
+  it("flips back to down on a second toggle", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const a = note("A4", 4);
+    a.stem = "down";
+    voice.items = [a, rest(4), rest(2)];
+
+    const next = produce(score, (draft) => {
+      toggleStemDirection([a.id]).apply(draft);
+      toggleStemDirection([a.id]).apply(draft);
+    });
+
+    const items = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("down");
+  });
+
+  it("sets a note with no explicit stem override to up", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    voice.items = [c, rest(4), rest(2)];
+
+    const next = produce(score, (draft) => toggleStemDirection([c.id]).apply(draft));
+
+    const items = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("up");
+  });
+
+  it("converges a mixed selection to up unless every one is already down", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const c = note("C4", 4);
+    const d = note("D4", 4);
+    c.stem = "down";
+    d.stem = "up";
+    voice.items = [c, d, rest(2)];
+
+    const next = produce(score, (draft) => toggleStemDirection([c.id, d.id]).apply(draft));
+
+    const items = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("up");
+    expect(items[1]!.kind === "note" && items[1]!.stem).toBe("up");
+  });
+
+  it("ignores ids that resolve to a rest or nothing at all", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const r = rest(4);
+    voice.items = [r, rest(4), rest(2)];
+
+    const next = produce(score, (draft) => toggleStemDirection([r.id, "unknown"]).apply(draft));
+
+    expect(next).toBe(score); // no-op: nothing to flip
   });
 });
 

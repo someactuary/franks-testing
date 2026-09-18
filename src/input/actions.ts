@@ -18,6 +18,7 @@ import {
   removeSpanner,
   setFingering,
   toggleArticulation,
+  toggleStemDirection,
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
 import { setKeySignature } from "@/commands/keysig";
@@ -169,6 +170,12 @@ export const handleAction: ActionHandler = (state, action) => {
       const targets = targetEvents(state);
       if (targets.length === 0) return { commands: [], message: "Nothing selected" };
       return { commands: [toggleArticulation(targets.map((t) => t.event.id), action.articulation)] };
+    }
+
+    case "flipStem": {
+      const targets = targetEvents(state);
+      if (targets.length === 0) return { commands: [], message: "Nothing selected" };
+      return { commands: [toggleStemDirection(targets.map((t) => t.event.id))] };
     }
 
     case "slur":

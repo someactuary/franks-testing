@@ -139,6 +139,7 @@ export type PaletteAction =
   | { kind: "text"; text: string; style: "expression" | "technique" | "plain"; placement?: Placement }
   | { kind: "fingering"; text: string }
   | { kind: "tuplet"; actual: number; normal: number }
+  | { kind: "flipStem" }
   | { kind: "setDuration"; base: NotatedDuration["base"]; dots: NotatedDuration["dots"] }
   | { kind: "toggleDot" }
   | { kind: "removeAttachment"; id: Id }

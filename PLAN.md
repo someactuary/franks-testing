@@ -499,3 +499,20 @@ score canvas is custom SVG either way).
   Save with no prior name derives one from the title; Save As prompts and remembers
   the new name; a plain Save afterward reuses it without re-prompting; Open sets the
   remembered name and it survives a page reload; New Score clears it.
+- 2026-09-18 (fix: flip stem direction). Frank reported stems flipping to the wrong
+  direction when using arrow keys to move notes, citing bar 8 of his real file
+  Rob_Mullins_Etudes_Bb.pscore (the A's stem pointing down instead of up). Investigated
+  thoroughly: confirmed by direct engraving-output inspection that no pitch-editing
+  command (setNotePitch, transposeNotes) has ever touched NoteEvent.stem, and that
+  every stem-direction code path in semantic.ts prefers an explicit stem over pitch —
+  a dragged note, an octave-transposed note, and one member of a beam group moved 2
+  octaves all kept their original direction. The actual cause: bar 8's A already had
+  stem: "down" baked into the imported file, almost certainly an Audiveris OMR misread
+  of the original engraving, with no existing way to correct it. Added a real fix —
+  `toggleStemDirection` (src/commands/notation.ts), wired as a "flipStem" PaletteAction,
+  the "X" key (MuseScore's own shortcut for this), and a "Flip Stem" button in the
+  Articulations palette group. Converges a whole selection to one direction per press
+  so flipping an entire beamed run actually moves its shared direction. 870 tests (8
+  new), lint/typecheck/build clean. Verified live against the actual reported note:
+  Flip Stem button then "X" correctly toggled both the model field and the rendered
+  stem line.

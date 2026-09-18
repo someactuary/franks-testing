@@ -59,6 +59,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: "Notation",
     rows: [
       ["S", "Slur (first/last selected, or to the next note)"],
+      ["X", "Flip stem direction"],
       ["< / >", "Crescendo / diminuendo hairpin"],
       ["⌘3 / ⌘5 / ⌘6 / ⌘7", "Triplet / quintuplet / sextuplet / septuplet"],
       ["⌘2 / ⌘9", "Duplet (2:3) / 9:8 tuplet"],

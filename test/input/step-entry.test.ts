@@ -870,6 +870,21 @@ describe("handleKey: slur / hairpin / tuplet shortcuts", () => {
     expect(h.history.current.spanners[0]!.kind).toBe("slur");
   });
 
+  it('"x" flips the selected note\'s stem direction', () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const a = note("A4", 4);
+    a.stem = "down";
+    voice.items = [a, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [a.notes[0]!.id] };
+
+    h.press({ key: "x" });
+
+    const items = h.history.current.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items;
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("up");
+  });
+
   it('"<" and ">" add cresc / dim hairpins', () => {
     const score = newPianoScore({ measureCount: 1 });
     const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;

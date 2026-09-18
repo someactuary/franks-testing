@@ -422,3 +422,31 @@ in-browser save-location dialog otherwise) defaulting to the current name, and f
 a `.pscore` extension on whatever's typed. The filename displays in the toolbar next to
 the app name (`.toolbar-doc` wrapper, `.toolbar-filename` span) and in the browser tab
 title — the two places a document's name customarily shows up.
+
+## Flip stem direction (2026-09-18)
+
+Frank reported stems "flipping to the wrong direction" when using the up/down arrow
+keys to move notes in his real file `Rob_Mullins_Etudes_Bb.pscore` (OMR-imported,
+gitignored). Investigated at length before finding the real story: `NoteEvent.stem` is
+never written by any pitch-editing command (`setNotePitch`, `transposeNotes`) — every
+solo-note and beam-group stem-direction path in `src/engraving/semantic.ts` prefers an
+explicit `stem` over any pitch computation, and this was verified by direct
+engraving-output inspection (a dragged note, an octave-transposed note, and one member
+of a 6-note beam group moved 2 octaves all kept their original rendered direction).
+So pitch editing was never the cause. The actual note Frank pointed to (bar 8, the A)
+already had `stem: "down"` sitting in the *imported* file, most likely an Audiveris
+OMR misread of the original engraving — and there was no way to fix that misread
+without re-doing the whole passage's rhythm/pitches, since nothing in the app ever
+wrote to `NoteEvent.stem`.
+
+Added a real fix, not just an explanation: `toggleStemDirection(eventIds)`
+(`src/commands/notation.ts`) explicitly sets `event.stem`, wired up as `flipStem`
+(`PaletteAction`, "X" key — MuseScore's own convention for this — and a "Flip Stem"
+button in the Articulations palette group). Converges the whole selection to one
+direction per press (up unless every selected event is already "up") rather than
+flipping each event independently, so selecting an entire beamed run and flipping it
+actually moves the beam's shared direction — which is decided by whichever member's
+`stem` `buildBeamGroups` finds first, so flipping only one non-first member would
+otherwise visibly do nothing. Verified against the actual reported note: selecting it
+and pressing the Flip Stem button (then "X" to flip back) correctly toggled both the
+stored field and the rendered `<line>` primitive's direction.

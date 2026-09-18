@@ -129,6 +129,35 @@ describe("handleAction: articulation", () => {
   });
 });
 
+describe("handleAction: flipStem", () => {
+  it("flips the selected note's stem, converging a mixed selection to up", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const a = note("A4", 4);
+    a.stem = "down";
+    voice.items = [a, rest(4), rest(2)];
+    const h = new Harness(score);
+    h.selection = { ids: [a.notes[0]!.id] };
+
+    h.act({ kind: "flipStem" });
+    let items = h.voiceItems(0);
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("up");
+
+    h.act({ kind: "flipStem" });
+    items = h.voiceItems(0);
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("down");
+  });
+
+  it("reports nothing selected when the selection is empty", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const h = new Harness(score);
+    h.selection = { ids: [] };
+
+    const result = h.act({ kind: "flipStem" });
+    expect(result?.message).toBe("Nothing selected");
+  });
+});
+
 describe("handleAction: slur / hairpin / pedal / ottava", () => {
   it("slur connects the first and last of two selected notes", () => {
     const score = newPianoScore({ measureCount: 1 });
