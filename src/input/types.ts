@@ -153,7 +153,7 @@ export type PaletteAction =
   | { kind: "setStaffName"; staffIndex: number; name: string; abbreviation?: string }
   | { kind: "setBracket"; bracket: StaffGroupSymbol }
   // Score info: title/subtitle/composer/lyricist/copyright (src/ui/ScoreInfoPanel.tsx).
-  | { kind: "setScoreMeta"; patch: Partial<ScoreMeta> }
+  | { kind: "setMeta"; patch: Partial<ScoreMeta> }
   // Voices
   | { kind: "setVoice"; voiceIndex: number }
   // Key signature: applies at the cursor's measure, per docs/ARCHITECTURE.md's

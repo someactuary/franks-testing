@@ -18,7 +18,7 @@ const FIELDS: { key: keyof ScoreMeta; label: string; placeholder: string }[] = [
  * Edits `score.meta`'s title-block fields (title/subtitle/composer/lyricist) — the
  * text engraved at the top of page 1 (src/engraving/engrave.ts's `emitTitleBlock`),
  * previously set only by import or the New Score form and otherwise stuck. Each
- * field commits on blur as its own `setScoreMeta` action/undo step, same pattern as
+ * field commits on blur as its own `setMeta` action/undo step, same pattern as
  * StavesPanel's staff-name fields.
  */
 export function ScoreInfoPanel({ meta, onApplyAction, onClose }: ScoreInfoPanelProps) {
@@ -42,7 +42,7 @@ export function ScoreInfoPanel({ meta, onApplyAction, onClose }: ScoreInfoPanelP
             placeholder={placeholder}
             onBlur={(e) => {
               const value = e.target.value;
-              if (value !== (meta[key] ?? "")) onApplyAction({ kind: "setScoreMeta", patch: { [key]: value } });
+              if (value !== (meta[key] ?? "")) onApplyAction({ kind: "setMeta", patch: { [key]: value } });
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") e.currentTarget.blur();

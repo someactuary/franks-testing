@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { newPianoScore, note, rest, type Attachment, type Spanner } from "@/model";
 import {
   addAttachment,
+  captureStemBaseline,
   clearEventDecorations,
   addSpanner,
   eventAnchor,
   locateEventAnchor,
+  reconcileStemAfterPitchChange,
   removeAttachment,
   removeSpanner,
   setFingering,
@@ -103,6 +105,62 @@ describe("toggleArticulation", () => {
     const next = produce(score, (draft) => toggleArticulation([r.id, "unknown"], "accent").apply(draft));
 
     expect(next).toBe(score); // no-op: nothing to toggle
+  });
+});
+
+describe("captureStemBaseline / reconcileStemAfterPitchChange", () => {
+  it("uses the clef in effect at the event's measure, honouring a mid-score clef change", () => {
+    const score = newPianoScore({ measureCount: 2 }); // staff 0 starts treble
+    const staff1 = score.parts[0]!.measures[1]!.staves[0]!;
+    staff1.clefChanges = [{ at: { num: 0, den: 1 }, clef: "bass" }];
+    // Bass clef middle line is D3; C3 sits below it, so "up" is its natural stem —
+    // the opposite of what treble clef would say for the same written pitch.
+    const ev = note("C3", 4);
+    ev.stem = "up";
+    staff1.voices[0]!.items = [ev, rest(4), rest(2)];
+
+    const baseline = captureStemBaseline(score, ev.id);
+    expect(baseline?.natural).toBe("up");
+
+    // Move it above the bass staff's middle line (D3): now "down" is natural.
+    const next = produce(score, (d) => {
+      const hitEv = d.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items[0]!;
+      if (hitEv.kind === "note") hitEv.notes[0]!.pitch = { step: "G", alter: 0, octave: 3 };
+      reconcileStemAfterPitchChange(d, ev.id, baseline);
+    });
+
+    const updated = next.parts[0]!.measures[1]!.staves[0]!.voices[0]!.items[0]!;
+    expect(updated.kind === "note" && updated.stem).toBe("down");
+  });
+
+  it("captureStemBaseline returns undefined for a note with no explicit stem", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("A4", 4); // no stem override
+    voice.items = [ev, rest(4), rest(2)];
+
+    expect(captureStemBaseline(score, ev.id)).toBeUndefined();
+  });
+
+  it("captureStemBaseline returns undefined for a stem already set against convention", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("A4", 4); // natural is "up"
+    ev.stem = "down";
+    voice.items = [ev, rest(4), rest(2)];
+
+    expect(captureStemBaseline(score, ev.id)).toBeUndefined();
+  });
+
+  it("reconcileStemAfterPitchChange is a no-op given an undefined baseline", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("A4", 4);
+    ev.stem = "down";
+    voice.items = [ev, rest(4), rest(2)];
+
+    const next = produce(score, (d) => reconcileStemAfterPitchChange(d, ev.id, undefined));
+    expect(next).toBe(score); // no-op: nothing to reconcile
   });
 });
 

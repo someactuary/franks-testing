@@ -74,6 +74,34 @@ body {
   cursor: default;
 }
 
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.3rem 0;
+  background: #4a4e57;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  width: 2rem;
+  height: 2rem;
+}
+
+.icon-button svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
 .toolbar select,
 .toolbar input[type="number"] {
   font: inherit;

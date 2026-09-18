@@ -516,3 +516,39 @@ score canvas is custom SVG either way).
   new), lint/typecheck/build clean. Verified live against the actual reported note:
   Flip Stem button then "X" correctly toggled both the model field and the rendered
   stem line.
+- 2026-09-18 (feature: automatic stem reconciliation on pitch change). Same-day
+  follow-up: Frank clarified he wanted the stem to flip on its own whenever a move
+  changes which direction is natural, efficiently for a whole moved section, not a
+  manual fix per note. Added captureStemBaseline/reconcileStemAfterPitchChange
+  (src/commands/notation.ts), called from setNotePitch (mouse drag) and transposeNotes
+  (arrow keys): if an event's stem was tracking convention before the move and the
+  move changes what convention picks, flips it to match; leaves alone a stem already
+  set against convention (deliberate flip, or an uncorrected OMR misread), and never
+  touches notes with no explicit stem (they already auto-track via the existing
+  no-override render path). Accounts for multi-voice staves (voice convention instead
+  of pitch) and mid-score clef changes (exported clefAtMeasureStart from engrave.ts);
+  beaming is out of scope, same caveat as the manual flip. transposeNotes batches one
+  baseline/reconcile pass per touched event, not per note, so a whole selected section
+  moved together is still efficient. 880 tests (12 new), lint/typecheck/build clean.
+  Verified live: after one manual toggleStemDirection to re-anchor the already-wrong
+  note, moving it down an octave and back up with arrow keys auto-flipped its stem
+  both ways with no further manual steps.
+
+  Also, while this was in progress: found the "editable score info" work from earlier
+  today had added setScoreMeta (commands/meta.ts) without noticing setMeta already
+  existed, unused, in commands/basic.ts. Consolidated onto setMeta (carrying over
+  setScoreMeta's clear-on-empty-string behavior) and deleted commands/meta.ts.
+- 2026-09-18 (redesign: toolbar). Frank found the New/Open/Save row "ugly and busy"
+  and asked for icons, plus moving Shortcuts and Score Info to the far right under
+  MIDI. Added six small hand-drawn icons (src/ui/icons.tsx: New/Open/Save/Undo/Redo/
+  Print — no icon library in the project's dependencies) grouped into
+  `.toolbar-group`s with a `.toolbar-divider` between clusters; Save As, Export
+  MusicXML, and the panel/import/compare/sample controls stayed as text. Moved
+  Shortcuts/Score Info to the end of the toolbar. Hit and fixed a real bug on the way:
+  the icons first rendered blank because their SVGs were being flex-shrunk to ~1px
+  wide inside the fixed-width icon buttons; fixed with `flex-shrink: 0` plus explicit
+  pixel width/height on `.icon-button svg` (confirmed via computed-style inspection,
+  not guessed) — a known gotcha for SVGs in flex containers worth remembering for any
+  future icon work here. Verified live via screenshot and a functional pass (Undo
+  starts disabled, New opens the form, Save downloads, Print doesn't error, toolbar
+  child order matches the requested layout).

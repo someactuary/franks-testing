@@ -37,6 +37,7 @@ import type {
 } from "@/model/score";
 import { addMeasures } from "./basic";
 import { locateEvent, locateNote, type Event } from "./locate";
+import { captureStemBaseline, reconcileStemAfterPitchChange, type StemBaseline } from "./notation";
 import { decomposeDuration, restsFor } from "./rhythm";
 import { transposeSemitone } from "./transpose";
 import type { Command } from "./types";
@@ -570,14 +571,30 @@ export function setNoteAlter(noteId: string, alter: Alter): Command {
 }
 
 /** Transposes the given notes by a fixed number of semitones or octaves. */
+/**
+ * Transposes every note in `noteIds` by `by`. For each touched event, if its stem
+ * direction was tracking convention before the move, and the move changes what
+ * convention would pick, flips the stem to match — the same rule `setNotePitch` uses
+ * for mouse-dragged pitch changes (docs/ARCHITECTURE.md's "Flip stem direction on
+ * pitch change"), applied here too since these arrow-key moves go through this
+ * command instead. Baselines are captured once per event, before any of its notes'
+ * pitches change (a chord can have more than one of its notes in `noteIds`), and
+ * reconciled once per event after every pitch (and the chord re-sort below) is done —
+ * so transposing an entire selected section is still one baseline/reconcile pass per
+ * event touched, not per note.
+ */
 export function transposeNotes(noteIds: readonly string[], by: { semitones: number } | { octaves: number }): Command {
   return {
     label: "Transpose notes",
     apply(draft) {
       const touchedEventIds = new Set<string>();
+      const stemBaselines = new Map<string, StemBaseline | undefined>();
       for (const noteId of noteIds) {
         const hit = locateNote(draft, noteId);
         if (!hit) continue;
+        if (!touchedEventIds.has(hit.event.id)) {
+          stemBaselines.set(hit.event.id, captureStemBaseline(draft, hit.event.id));
+        }
         touchedEventIds.add(hit.event.id);
         if ("octaves" in by) {
           hit.note.pitch = { ...hit.note.pitch, octave: hit.note.pitch.octave + by.octaves };
@@ -592,6 +609,9 @@ export function transposeNotes(noteIds: readonly string[], by: { semitones: numb
       for (const eventId of touchedEventIds) {
         const hit = locateEvent(draft, eventId);
         if (hit && hit.event.kind === "note") hit.event.notes.sort((a, b) => comparePitch(a.pitch, b.pitch));
+      }
+      for (const eventId of touchedEventIds) {
+        reconcileStemAfterPitchChange(draft, eventId, stemBaselines.get(eventId));
       }
     },
   };

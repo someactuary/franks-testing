@@ -2,6 +2,7 @@ import { produce } from "immer";
 import { describe, expect, it } from "vitest";
 import {
   chord,
+  emptyVoice,
   frac,
   newPianoScore,
   notated,
@@ -369,6 +370,102 @@ describe("transposeNotes", () => {
     const upOctEv = voiceOf(upOctave, 0).items[0]!;
     if (upOctEv.kind !== "note") throw new Error("expected a note event");
     expect(upOctEv.notes[0]!.pitch).toEqual({ step: "C", alter: 0, octave: 5 });
+  });
+
+  it("flips a stem that was tracking convention when the move changes which side it's on", () => {
+    // Treble clef middle line is B4; A4 sits below it, so "up" is its natural stem.
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const a4 = note("A4", 4);
+    a4.stem = "up";
+    voice.items = [a4, rest(4), rest(2)];
+
+    // D5 sits above the middle line, so convention now wants "down".
+    const next = produce(score, (d) => transposeNotes([a4.notes[0]!.id], { semitones: 5 }).apply(d));
+
+    const ev = voiceOf(next, 0).items[0]!;
+    if (ev.kind !== "note") throw new Error("expected a note event");
+    expect(pitchToString(ev.notes[0]!.pitch)).toBe("D5");
+    expect(ev.stem).toBe("down");
+  });
+
+  it("leaves a stem alone that was already set against convention", () => {
+    // A4's natural stem is "up" (below the middle line); this one was deliberately
+    // flipped to "down" beforehand (e.g. via toggleStemDirection or hand import).
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const a4 = note("A4", 4);
+    a4.stem = "down";
+    voice.items = [a4, rest(4), rest(2)];
+
+    const next = produce(score, (d) => transposeNotes([a4.notes[0]!.id], { semitones: -2 }).apply(d));
+
+    const ev = voiceOf(next, 0).items[0]!;
+    if (ev.kind !== "note") throw new Error("expected a note event");
+    expect(ev.stem).toBe("down"); // untouched, even though it moved further from the middle line
+  });
+
+  it("never introduces a stem override on a note that never had one", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const a4 = note("A4", 4); // no explicit stem
+    voice.items = [a4, rest(4), rest(2)];
+
+    const next = produce(score, (d) => transposeNotes([a4.notes[0]!.id], { semitones: 5 }).apply(d));
+
+    const ev = voiceOf(next, 0).items[0]!;
+    if (ev.kind !== "note") throw new Error("expected a note event");
+    expect(ev.stem).toBeUndefined();
+  });
+
+  it("reconciles every touched event once when a whole section is transposed together", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const a4 = note("A4", 4);
+    const b4 = note("B4", 4); // on the middle line itself: naturally "down"
+    a4.stem = "up"; // matches A4's convention
+    b4.stem = "down"; // matches B4's convention
+    voice.items = [a4, b4];
+
+    const ids = [a4.notes[0]!.id, b4.notes[0]!.id];
+    const next = produce(score, (d) => transposeNotes(ids, { octaves: 1 }).apply(d));
+
+    const items = voiceOf(next, 0).items;
+    // Both moved up an octave, now well above the middle line: both should read "down".
+    expect(items[0]!.kind === "note" && items[0]!.stem).toBe("down");
+    expect(items[1]!.kind === "note" && items[1]!.stem).toBe("down");
+  });
+
+  it("reconciles a chord's shared event once, using the baseline from before any of its notes moved", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = voiceOf(score, 0);
+    const c = chord(["C4", "E4"], 4); // both below the middle line: natural "up"
+    c.stem = "up";
+    voice.items = [c, rest(4), rest(2)];
+
+    // Move the whole chord well above the middle line.
+    const ids = c.notes.map((n) => n.id);
+    const next = produce(score, (d) => transposeNotes(ids, { octaves: 1 }).apply(d));
+
+    const ev = voiceOf(next, 0).items[0]!;
+    expect(ev.kind === "note" && ev.stem).toBe("down");
+  });
+
+  it("uses the multi-voice convention instead of pitch when the staff carries more than one voice", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const sm = score.parts[0]!.measures[0]!.staves[0]!;
+    const low = note("C4", 4); // deep below the middle line
+    low.stem = "down"; // matches voice 1's convention, NOT the pitch-based one ("up")
+    const secondVoice = emptyVoice(1);
+    secondVoice.items = [low, rest(4), rest(2)];
+    sm.voices = [emptyVoice(0), secondVoice];
+
+    // Move it further down; pitch-based convention would still say "up" either way,
+    // but the point is the voice rule decides here, not pitch, so nothing should flip.
+    const next = produce(score, (d) => transposeNotes([low.notes[0]!.id], { semitones: -2 }).apply(d));
+
+    const ev = next.parts[0]!.measures[0]!.staves[0]!.voices[1]!.items[0]!;
+    expect(ev.kind === "note" && ev.stem).toBe("down");
   });
 });
 

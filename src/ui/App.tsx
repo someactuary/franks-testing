@@ -23,6 +23,7 @@ import type { ImportedFromOmr } from "./ImportPdfDialog";
 import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { ScoreInfoPanel } from "./ScoreInfoPanel";
+import { NewIcon, OpenIcon, PrintIcon, RedoIcon, SaveIcon, UndoIcon } from "./icons";
 import { newSatbScore } from "./presets";
 import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
 import { useEditorStore } from "./store";
@@ -598,42 +599,59 @@ export function App() {
           <span className="toolbar-title">Sheet Music Assistant</span>
           {fileName && <span className="toolbar-filename">{fileName}</span>}
         </span>
-        <button type="button" onClick={() => setNewFormOpen((v) => !v)}>
-          New
-        </button>
-        <button type="button" onClick={() => fileInputRef.current?.click()}>
-          Open
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pscore,.musicxml,.xml,.mxl,application/json"
-          style={{ display: "none" }}
-          onChange={(e) => void handleFileChosen(e)}
-        />
-        <button type="button" onClick={handleSave}>
-          Save
-        </button>
-        <button type="button" onClick={handleSaveAs}>
-          Save As…
+
+        <div className="toolbar-group">
+          <button type="button" className="icon-button" title="New score" onClick={() => setNewFormOpen((v) => !v)}>
+            <NewIcon />
+          </button>
+          <button type="button" className="icon-button" title="Open…" onClick={() => fileInputRef.current?.click()}>
+            <OpenIcon />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pscore,.musicxml,.xml,.mxl,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => void handleFileChosen(e)}
+          />
+          <button type="button" className="icon-button" title="Save" onClick={handleSave}>
+            <SaveIcon />
+          </button>
+          <button type="button" onClick={handleSaveAs}>
+            Save As…
+          </button>
+        </div>
+
+        <div className="toolbar-divider" aria-hidden="true" />
+
+        <div className="toolbar-group">
+          <button
+            type="button"
+            className="icon-button"
+            title="Undo"
+            onClick={editor.undo}
+            disabled={!editor.canUndo}
+          >
+            <UndoIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="Redo"
+            onClick={editor.redo}
+            disabled={!editor.canRedo}
+          >
+            <RedoIcon />
+          </button>
+        </div>
+
+        <div className="toolbar-divider" aria-hidden="true" />
+
+        <button type="button" className="icon-button" title="Print" onClick={() => window.print()}>
+          <PrintIcon />
         </button>
         <button type="button" onClick={handleExportMusicXml}>
           Export MusicXML
-        </button>
-        <button type="button" onClick={editor.undo} disabled={!editor.canUndo}>
-          Undo
-        </button>
-        <button type="button" onClick={editor.redo} disabled={!editor.canRedo}>
-          Redo
-        </button>
-        <button type="button" onClick={() => window.print()}>
-          Print
-        </button>
-        <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
-          Shortcuts
-        </button>
-        <button type="button" onClick={() => setInfoOpen((v) => !v)} aria-pressed={infoOpen}>
-          Score Info
         </button>
         <button type="button" onClick={() => setStavesOpen((v) => !v)} aria-pressed={stavesOpen}>
           Staves
@@ -694,6 +712,15 @@ export function App() {
           )}
           {midiError && <span className="toolbar-hint">{midiError}</span>}
         </div>
+
+        <div className="toolbar-divider" aria-hidden="true" />
+
+        <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
+          Shortcuts
+        </button>
+        <button type="button" onClick={() => setInfoOpen((v) => !v)} aria-pressed={infoOpen}>
+          Score Info
+        </button>
       </header>
       {newFormOpen && (
         <NewScoreForm onCreate={handleNewScore} onCreateSatb={handleNewSatb} onCancel={() => setNewFormOpen(false)} />

@@ -104,7 +104,7 @@ interface BuiltSystem extends SystemFrame {
   below: number;
 }
 
-function clefAtMeasureStart(sm: StaffMeasure | undefined, running: ClefKind): ClefKind {
+export function clefAtMeasureStart(sm: StaffMeasure | undefined, running: ClefKind): ClefKind {
   // M0 only honours clef changes at the very start of a measure.
   const change = sm?.clefChanges?.find((c) => c.at.num === 0);
   return change ? change.clef : running;

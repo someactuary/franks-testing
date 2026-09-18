@@ -17,9 +17,20 @@ import {
 describe("basic commands", () => {
   it("setMeta merges fields into score.meta without clobbering the rest", () => {
     const score = newPianoScore({ title: "A" });
-    const next = produce(score, (d) => setMeta({ composer: "Bach" }).apply(d));
+    const next = produce(score, (d) => setMeta({ composer: "Bach", subtitle: "A subtitle", lyricist: "A. Poet" }).apply(d));
     expect(next.meta.title).toBe("A");
     expect(next.meta.composer).toBe("Bach");
+    expect(next.meta.subtitle).toBe("A subtitle");
+    expect(next.meta.lyricist).toBe("A. Poet");
+  });
+
+  it("setMeta clears a field when given an empty string", () => {
+    const score = produce(newPianoScore({ title: "A" }), (d) => {
+      d.meta.composer = "Bach";
+    });
+    const next = produce(score, (d) => setMeta({ composer: "" }).apply(d));
+    expect(next.meta.composer).toBeUndefined();
+    expect(next.meta.title).toBe("A");
   });
 
   it("setTitle sets meta.title", () => {
@@ -117,6 +128,36 @@ describe("basic commands", () => {
     const updatedEvent = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items[0]!;
     if (updatedEvent.kind !== "note") throw new Error("expected a note event");
     expect(updatedEvent.notes[0]!.pitch).toEqual(newPitch);
+  });
+
+  it("setNotePitch flips a stem that was tracking convention when a mouse drag crosses the middle line", () => {
+    // Treble clef middle line is B4; A4 sits below it, so "up" is its natural stem.
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("A4", 4);
+    ev.stem = "up";
+    voice.items = [ev, rest(4), rest(2)];
+    const noteId = ev.notes[0]!.id;
+
+    // D5 sits above the middle line: convention now wants "down".
+    const next = produce(score, (d) => setNotePitch(noteId, { step: "D", alter: 0, octave: 5 }).apply(d));
+
+    const updatedEvent = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items[0]!;
+    expect(updatedEvent.kind === "note" && updatedEvent.stem).toBe("down");
+  });
+
+  it("setNotePitch leaves a deliberately-overridden stem alone", () => {
+    const score = newPianoScore({ measureCount: 1 });
+    const voice = score.parts[0]!.measures[0]!.staves[0]!.voices[0]!;
+    const ev = note("A4", 4);
+    ev.stem = "down"; // A4's natural stem is "up" — this one was set against it deliberately
+    voice.items = [ev, rest(4), rest(2)];
+    const noteId = ev.notes[0]!.id;
+
+    const next = produce(score, (d) => setNotePitch(noteId, { step: "G", alter: 0, octave: 3 }).apply(d));
+
+    const updatedEvent = next.parts[0]!.measures[0]!.staves[0]!.voices[0]!.items[0]!;
+    expect(updatedEvent.kind === "note" && updatedEvent.stem).toBe("down");
   });
 
   it("setEventDuration changes the notated duration without touching other events", () => {

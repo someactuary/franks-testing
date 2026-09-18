@@ -6,14 +6,18 @@
 import { emptyVoice, newId } from "@/model";
 import type { Anchor, MeasureAttributes, NotatedDuration, PartMeasure, Pitch, RestEvent, ScoreMeta, VoiceItem } from "@/model";
 import { findEventInVoice, locateEvent, locateNote, type Event } from "./locate";
+import { captureStemBaseline, reconcileStemAfterPitchChange } from "./notation";
 import type { Command } from "./types";
 
-/** Merges `patch` into `score.meta`. */
+/** Merges `patch` into `score.meta`; an empty string clears that field rather than storing it. */
 export function setMeta(patch: Partial<ScoreMeta>): Command {
   return {
     label: "Set score meta",
     apply(draft) {
-      Object.assign(draft.meta, patch);
+      for (const [key, value] of Object.entries(patch) as [keyof ScoreMeta, string | undefined][]) {
+        if (value) draft.meta[key] = value;
+        else delete draft.meta[key];
+      }
     },
   };
 }
@@ -91,14 +95,21 @@ export function deleteEvent(eventId: string): Command {
   };
 }
 
-/** Changes the pitch of the note with id `noteId`. */
+/**
+ * Changes the pitch of the note with id `noteId`. If its event's stem direction was
+ * tracking convention before the move, and the move changes what convention would
+ * pick, flips the stem to match (docs/ARCHITECTURE.md's "Flip stem direction on pitch
+ * change") — see `reconcileStemAfterPitchChange`'s doc comment for the exact rule.
+ */
 export function setNotePitch(noteId: string, pitch: Pitch): Command {
   return {
     label: "Set note pitch",
     apply(draft) {
       const hit = locateNote(draft, noteId);
       if (!hit) throw new Error(`setNotePitch: no note with id "${noteId}"`);
+      const baseline = captureStemBaseline(draft, hit.event.id);
       hit.note.pitch = pitch;
+      reconcileStemAfterPitchChange(draft, hit.event.id, baseline);
     },
   };
 }

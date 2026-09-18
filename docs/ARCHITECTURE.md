@@ -450,3 +450,61 @@ actually moves the beam's shared direction — which is decided by whichever mem
 otherwise visibly do nothing. Verified against the actual reported note: selecting it
 and pressing the Flip Stem button (then "X" to flip back) correctly toggled both the
 stored field and the rendered `<line>` primitive's direction.
+
+**Follow-up, same day: automatic reconciliation on pitch change.** Frank clarified
+what he actually wanted: not just a manual fix, but the stem to flip *on its own*
+whenever moving a note changes which direction convention would pick — "if it changes
+the stem direction, then the stem needs to flip" — and efficiently for a whole
+selected section moved at once, not just one note at a time. Added
+`captureStemBaseline`/`reconcileStemAfterPitchChange` (`src/commands/notation.ts`),
+called from both pitch-changing commands (`setNotePitch` — mouse drag; `transposeNotes`
+— arrow keys): before the pitch change, capture what direction convention would pick
+for the event *right now*; after, if the event's stem was tracking that (matching it,
+or the common case of no override at all skips this entirely) and convention would now
+pick something else, update the stem to match. Deliberately does **not** touch a stem
+that was already sitting away from convention (a deliberate `toggleStemDirection` flip,
+or a stale OMR misread nobody's corrected yet) — an unrelated pitch nudge shouldn't
+silently discard that choice, and it means a note that's *already* wrong (like Frank's
+originally-reported one) needs one `toggleStemDirection` to re-anchor it before this
+starts tracking it automatically. Convention itself now accounts for multi-voice
+staves too (`voiceStemDirection` instead of pitch, when the staff carries more than one
+voice) and mid-score clef changes (walks `clefAtMeasureStart`, exported from
+`engrave.ts` for this) — beaming is the one thing deliberately left out, same
+one-note-at-a-time caveat as the manual flip above. `transposeNotes` captures one
+baseline per *event* before any of its notes' pitches change (a chord can have more
+than one note in the same transpose call) and reconciles once per event after, so
+transposing a whole selected passage is still one pass, not one per note. Verified
+live against the real file: after one manual correction, moving the note down an
+octave and back up with the arrow keys correctly flipped its stem both ways with no
+further manual steps.
+
+## Toolbar redesign (2026-09-18)
+
+Frank found the New/Open/Save row "ugly and busy" and asked for icons, plus moving
+Shortcuts and Score Info to the far right under the MIDI controls. `src/ui/icons.tsx`
+has six small hand-drawn 16x16 stroke icons (New/Open/Save/Undo/Redo/Print) — no icon
+library in this project's dependencies, and pulling one in for six glyphs isn't worth
+the bundle weight. New/Open/Save/Save As are now one `.toolbar-group` cluster, a
+`.toolbar-divider` separates Undo/Redo into their own cluster, and Shortcuts/Score Info
+moved to the end of the toolbar, after the MIDI controls. Save As, Export MusicXML, and
+the panel/import/compare/sample controls stayed as text — less frequent or more
+specific actions that benefit from an explicit label, unlike the six everyday ones.
+
+One real bug on the way: the icons rendered as blank buttons at first — every SVG's
+computed width was ~1px, not the 16px set via its own `width`/`height` attributes.
+Root cause: an SVG is a normal flex item, and `.icon-button`'s `display: inline-flex`
+let it shrink under the button's fixed `width: 2rem`, and something in Chromium's flex
+sizing (verified: not a page-specific CSS conflict, no other rule touched these
+elements) let that shrink go almost to zero instead of stopping at content size. Fixed
+with an explicit `.icon-button svg { flex-shrink: 0; width: 16px; height: 16px; }` —
+a known gotcha for SVGs inside flex containers generally, worth remembering for any
+future icon work in this app.
+
+Also folded a duplicate into an existing command while this was in progress: the
+"editable score info" panel from earlier today (see above) had added a new
+`setScoreMeta` (`src/commands/meta.ts`) without noticing `setMeta` already existed,
+unused, in `src/commands/basic.ts`. Consolidated onto `setMeta` (now with `setScoreMeta`'s
+clear-on-empty-string behavior, which the original didn't have) and deleted
+`commands/meta.ts`; the `setTitle` command next to it is untouched — it's a
+long-standing minimal test fixture for undo/redo mechanics (`test/commands/history.test.ts`),
+not a real editing feature, unrelated to this.

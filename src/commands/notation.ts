@@ -5,7 +5,11 @@
  * part/staff it lives on) from an event id — used by src/input/actions.ts to turn a
  * selection into a notation object without re-walking the score itself.
  */
-import type { Anchor, Articulation, Attachment, Id, Score, Spanner } from "@/model";
+import type { Draft } from "immer";
+import type { Anchor, Articulation, Attachment, ClefKind, Id, Note, Score, Spanner, StemDirection } from "@/model";
+import { clefAtMeasureStart } from "@/engraving/engrave";
+import { staffStep } from "@/engraving/geometry";
+import { stemDirectionForSteps, voiceStemDirection } from "@/engraving/semantic";
 import { locateEvent, locateNote } from "./locate";
 import type { Command } from "./types";
 
@@ -118,6 +122,83 @@ export function toggleArticulation(eventIds: readonly Id[], articulation: Articu
       }
     },
   };
+}
+
+/** The clef in effect for `staffIndex` at the start of `measureIndex` (M0 only honours clef changes at a measure's very start — see `clefAtMeasureStart`'s own doc comment). */
+function effectiveClef(score: Score, partIndex: number, staffIndex: number, measureIndex: number): ClefKind {
+  const part = score.parts[partIndex];
+  let running = part?.staves[staffIndex]?.initialClef ?? "treble";
+  if (!part) return running;
+  for (let mi = 0; mi <= measureIndex; mi++) {
+    running = clefAtMeasureStart(part.measures[mi]?.staves[staffIndex], running);
+  }
+  return running;
+}
+
+/**
+ * The stem direction a note event at this position would take with no explicit
+ * override: the multi-voice convention (`voiceStemDirection`) when its staff carries
+ * more than one voice, else the ordinary farthest-from-the-middle-line rule
+ * (`stemDirectionForSteps`). Deliberately does not consider beaming — see
+ * `reconcileStemAfterPitchChange`'s doc comment for why that's an accepted gap here.
+ */
+function naturalStemDirection(
+  score: Score,
+  notes: readonly Note[],
+  partIndex: number,
+  staffIndex: number,
+  measureIndex: number,
+  voiceIndex: number,
+): StemDirection {
+  const sm = score.parts[partIndex]?.measures[measureIndex]?.staves[staffIndex];
+  if ((sm?.voices.length ?? 1) > 1) return voiceStemDirection(voiceIndex);
+  const clef = effectiveClef(score, partIndex, staffIndex, measureIndex);
+  return stemDirectionForSteps(notes.map((n) => staffStep(n.pitch, clef)));
+}
+
+/** What `captureStemBaseline` needs `reconcileStemAfterPitchChange` to remember about an event, taken before its pitch(es) change. */
+export interface StemBaseline {
+  natural: StemDirection;
+}
+
+/**
+ * Call before changing any of `eventId`'s notes' pitches, when the event carries an
+ * explicit `stem` override that currently matches what convention would pick anyway
+ * (see `reconcileStemAfterPitchChange` for why only that case matters). Returns
+ * `undefined` when there's nothing to reconcile — not a note, or no explicit stem to
+ * begin with — which also means callers skip the (mildly costly, clef-walking) work
+ * below for the common case of a plain, never-overridden note.
+ */
+export function captureStemBaseline(score: Score, eventId: Id): StemBaseline | undefined {
+  const hit = locateEvent(score, eventId);
+  if (!hit || hit.event.kind !== "note" || hit.event.stem === undefined) return undefined;
+  const staffIndex = hit.event.staff ?? hit.staffIndex;
+  const natural = naturalStemDirection(score, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex);
+  if (hit.event.stem !== natural) return undefined; // deliberately set against convention: never auto-touch it
+  return { natural };
+}
+
+/**
+ * Call after changing `eventId`'s notes' pitches (docs/ARCHITECTURE.md's "Flip stem
+ * direction on pitch change"): if `baseline` says the event's stem was tracking
+ * convention before the edit, and convention would now pick a different direction for
+ * its new pitch(es), updates `event.stem` to match — "the stem points down instead of
+ * up because I moved the note" is exactly this case. A `stem` that was already
+ * deliberately set against convention (via `toggleStemDirection`, or hand-tuned after
+ * import) is left alone regardless of the new pitch, so an unrelated nudge doesn't
+ * quietly discard that choice. Ignores beaming, same as `naturalStemDirection`: fixing
+ * one member of a beamed run this way only visibly changes the group's shared
+ * direction when that member happens to be the one the beam takes its direction from
+ * (`buildBeamGroups` uses the first member with an explicit `stem`) — select the whole
+ * run to move it reliably, same caveat as the manual flip above.
+ */
+export function reconcileStemAfterPitchChange(draft: Draft<Score>, eventId: Id, baseline: StemBaseline | undefined): void {
+  if (!baseline) return;
+  const hit = locateEvent(draft, eventId);
+  if (!hit || hit.event.kind !== "note") return;
+  const staffIndex = hit.event.staff ?? hit.staffIndex;
+  const newNatural = naturalStemDirection(draft, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex);
+  if (newNatural !== baseline.natural) hit.event.stem = newNatural;
 }
 
 /**

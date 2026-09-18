@@ -7,7 +7,7 @@
 import { produce } from "immer";
 import { add, cmp, diatonic, fromDiatonic, keyAlter, newId, notated, ZERO, type Anchor, type Score } from "@/model";
 import { locateEvent, locateNote } from "@/commands/locate";
-import { setNotePitch } from "@/commands/basic";
+import { setMeta, setNotePitch } from "@/commands/basic";
 import { makeTuplet, setDurationAt, toggleDotAt } from "@/commands/edit";
 import {
   addAttachment,
@@ -22,7 +22,6 @@ import {
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
 import { setKeySignature } from "@/commands/keysig";
-import { setScoreMeta } from "@/commands/meta";
 import {
   clearForcedBreaks,
   clearNudge,
@@ -346,8 +345,8 @@ export const handleAction: ActionHandler = (state, action) => {
     case "clearNudge":
       return { commands: [clearNudge(action.id)] };
 
-    case "setScoreMeta":
-      return { commands: [setScoreMeta(action.patch)] };
+    case "setMeta":
+      return { commands: [setMeta(action.patch)] };
 
     default: {
       const _exhaustive: never = action;
