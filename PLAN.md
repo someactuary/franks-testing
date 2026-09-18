@@ -478,3 +478,24 @@ score canvas is custom SVG either way).
   Carry-over: stripping removes all of an event's note-level decorations in one step
   (e.g. an accent and an ornament on the same note both go together), not one at a
   time — same "no per-decoration id" limitation as the carry-over above.
+- 2026-09-17: project folder moved from ~/personal_music_notation to
+  ~/AI Projects/personal_music_notation (git history, node_modules, gitignored
+  sample_sheet_music/ all carried over intact). Verified clean lint/typecheck/859
+  tests from the new location; no code referenced the old absolute path.
+- 2026-09-18 (feature: editable score info, remembered filename, Save As, app rename).
+  Implemented directly. Renamed the app to "Sheet Music Assistant" (was "Personal
+  Music Notation") in index.html and the toolbar. Title/subtitle/composer/lyricist
+  were set only by import or the New Score form and had no edit path afterward — added
+  `setScoreMeta` (src/commands/meta.ts) plus a new toggleable `ScoreInfoPanel` (same
+  pattern as StavesPanel: one text input per field, committed on blur). Also found and
+  fixed a real gap: lyricist was captured in the model (including via MusicXML import)
+  but never engraved anywhere — added it to the title block, top-left, mirroring
+  composer's top-right placement. Separately, the app had no notion of "the current
+  file" (Open/Save are pure browser downloads, no File System Access API) — added a
+  remembered `fileName` (persisted to localStorage like the existing MIDI-input
+  memory), a "Save As" button that always prompts for a name, and a filename display
+  in the toolbar and the browser tab title. 862 tests (3 new), lint/typecheck/build
+  clean. Verified live: editing title/composer/lyricist persists and re-engraves;
+  Save with no prior name derives one from the title; Save As prompts and remembers
+  the new name; a plain Save afterward reuses it without re-prompting; Open sets the
+  remembered name and it survives a page reload; New Score clears it.

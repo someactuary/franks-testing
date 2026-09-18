@@ -145,6 +145,7 @@ export interface TextPrim {
     | "title"
     | "subtitle"
     | "composer"
+    | "lyricist"
     | "dynamic"
     | "tempo"
     | "expression"

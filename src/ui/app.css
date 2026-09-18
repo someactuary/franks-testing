@@ -34,9 +34,25 @@ body {
   color: #fff;
 }
 
+.toolbar-doc {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-right: auto;
+  overflow: hidden;
+}
+
 .toolbar-title {
   font-weight: 600;
-  margin-right: auto;
+  white-space: nowrap;
+}
+
+.toolbar-filename {
+  color: #aaa;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar button {
@@ -381,6 +397,22 @@ body {
   align-items: center;
   gap: 0.4rem;
   margin: 8px 0;
+}
+.score-info-panel {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: 360px;
+}
+.score-info-row {
+  justify-content: space-between;
+}
+.score-info-label {
+  flex: 0 0 auto;
+  width: 70px;
+}
+.score-info-row input {
+  flex: 1 1 auto;
 }
 .staves-table {
   width: 100%;

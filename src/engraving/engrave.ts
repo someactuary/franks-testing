@@ -324,7 +324,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   }
 
   // --- 5. pagination -------------------------------------------------------
-  const hasTitleBlock = Boolean(score.meta.title ?? score.meta.subtitle ?? score.meta.composer);
+  const hasTitleBlock = Boolean(score.meta.title ?? score.meta.subtitle ?? score.meta.composer ?? score.meta.lyricist);
   const placements = paginate(
     built.map((b) => ({ above: b.above, below: b.below, startsPage: b.plan.startsPage })),
     metrics,
@@ -531,7 +531,7 @@ function emitSystemFrame(out: Primitive[], input: SystemFrameInput): void {
 }
 
 function emitTitleBlock(out: Primitive[], score: Score, metrics: ReturnType<typeof pageMetrics>): void {
-  const { title, subtitle, composer } = score.meta;
+  const { title, subtitle, composer, lyricist } = score.meta;
   const ref: Ref = { id: score.id, role: "text" };
   let y = metrics.top + ENGRAVING.titleSizeSp;
   if (title) {
@@ -569,6 +569,20 @@ function emitTitleBlock(out: Primitive[], score: Score, metrics: ReturnType<type
       size: ENGRAVING.composerSizeSp,
       style: "composer",
       anchor: "end",
+      ref,
+    });
+  }
+  // Mirrors composer's placement on the opposite side, standard sheet-music convention
+  // ("Words by .../Music by ...": lyricist top-left, composer top-right).
+  if (lyricist) {
+    out.push({
+      type: "text",
+      text: lyricist,
+      x: metrics.left,
+      y: Math.max(y, metrics.top + ENGRAVING.titleBlockSp - 1.5),
+      size: ENGRAVING.composerSizeSp,
+      style: "lyricist",
+      anchor: "start",
       ref,
     });
   }

@@ -12,6 +12,7 @@ import type {
   Placement,
   RestEvent,
   Score,
+  ScoreMeta,
   StaffGroupSymbol,
 } from "@/model";
 import type { NotatedDuration } from "@/model/duration";
@@ -150,6 +151,8 @@ export type PaletteAction =
   | { kind: "setClef"; staffIndex: number; clef: ClefKind }
   | { kind: "setStaffName"; staffIndex: number; name: string; abbreviation?: string }
   | { kind: "setBracket"; bracket: StaffGroupSymbol }
+  // Score info: title/subtitle/composer/lyricist/copyright (src/ui/ScoreInfoPanel.tsx).
+  | { kind: "setScoreMeta"; patch: Partial<ScoreMeta> }
   // Voices
   | { kind: "setVoice"; voiceIndex: number }
   // Key signature: applies at the cursor's measure, per docs/ARCHITECTURE.md's

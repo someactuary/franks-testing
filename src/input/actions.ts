@@ -21,6 +21,7 @@ import {
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
 import { setKeySignature } from "@/commands/keysig";
+import { setScoreMeta } from "@/commands/meta";
 import {
   clearForcedBreaks,
   clearNudge,
@@ -337,6 +338,9 @@ export const handleAction: ActionHandler = (state, action) => {
 
     case "clearNudge":
       return { commands: [clearNudge(action.id)] };
+
+    case "setScoreMeta":
+      return { commands: [setScoreMeta(action.patch)] };
 
     default: {
       const _exhaustive: never = action;

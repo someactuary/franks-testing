@@ -129,6 +129,7 @@ const TEXT_STYLES: Record<TextPrim["style"], TextStyleSpec> = {
   title: { family: "serif", weight: "bold" },
   subtitle: { family: "serif" },
   composer: { family: "serif", italic: true },
+  lyricist: { family: "serif", italic: true },
   dynamic: { family: "serif", italic: true },
   tempo: { family: "serif", weight: "bold" },
   expression: { family: "serif", italic: true },

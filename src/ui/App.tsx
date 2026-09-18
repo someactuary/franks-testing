@@ -22,6 +22,7 @@ import { ImportPdfDialog } from "./ImportPdfDialog";
 import type { ImportedFromOmr } from "./ImportPdfDialog";
 import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
+import { ScoreInfoPanel } from "./ScoreInfoPanel";
 import { newSatbScore } from "./presets";
 import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
 import { useEditorStore } from "./store";
@@ -35,6 +36,7 @@ import "./app.css";
 import "./print.css";
 
 const MIDI_INPUT_STORAGE_KEY = "pmn.midiInput";
+const FILENAME_STORAGE_KEY = "pmn.filename";
 
 const FIXTURE_NAMES = Object.keys(FIXTURES);
 
@@ -83,6 +85,13 @@ function extensionOf(filename: string): string {
   return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
 }
 
+/** `name` with its extension (if any) replaced by `ext`. */
+function withExtension(name: string, ext: string): string {
+  const dot = name.lastIndexOf(".");
+  const base = dot === -1 ? name : name.slice(0, dot);
+  return `${base}.${ext}`;
+}
+
 /** Best-effort localStorage read/write: private-mode/disabled storage never throws out here. */
 function readStoredMidiInput(): string | null {
   try {
@@ -95,6 +104,25 @@ function readStoredMidiInput(): string | null {
 function writeStoredMidiInput(id: string): void {
   try {
     if (typeof localStorage !== "undefined") localStorage.setItem(MIDI_INPUT_STORAGE_KEY, id);
+  } catch {
+    // best-effort only
+  }
+}
+
+/** The last saved/opened filename, remembered across reloads so "Save" doesn't re-ask. */
+function readStoredFilename(): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(FILENAME_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredFilename(name: string | null): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    if (name) localStorage.setItem(FILENAME_STORAGE_KEY, name);
+    else localStorage.removeItem(FILENAME_STORAGE_KEY);
   } catch {
     // best-effort only
   }
@@ -188,7 +216,16 @@ export function App() {
   const [newFormOpen, setNewFormOpen] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [stavesOpen, setStavesOpen] = useState(false);
+  // The name last opened/saved as, remembered across reloads (localStorage) so "Save"
+  // reuses it instead of re-deriving one from the title every time; "Save As" always
+  // prompts for a new one. Null means this document has never been saved.
+  const [fileName, setFileNameState] = useState<string | null>(() => readStoredFilename());
+  const setFileName = useCallback((name: string | null) => {
+    setFileNameState(name);
+    writeStoredFilename(name);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   // The imported PDF's bytes and the OMR review list, kept for the "Compare with
@@ -313,6 +350,12 @@ export function App() {
     return `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }`;
   }, [layout]);
 
+  // The browser tab is the customary place a document's filename shows up alongside
+  // the app name (Word, Google Docs, etc.).
+  useEffect(() => {
+    document.title = fileName ? `${fileName} — Sheet Music Assistant` : "Sheet Music Assistant";
+  }, [fileName]);
+
   const { applyKey } = editor;
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -336,14 +379,16 @@ export function App() {
       const make = FIXTURES[name];
       if (!make) return;
       setIoMessage(null);
+      setFileName(null);
       editor.loadScore(make());
     },
-    [editor],
+    [editor, setFileName],
   );
 
   function handleNewScore(opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) {
     setIoMessage(null);
     setSampleName("");
+    setFileName(null);
     editor.newScore({
       measureCount: opts.measureCount,
       timeSig: opts.timeSig,
@@ -355,6 +400,7 @@ export function App() {
   function handleNewSatb(opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) {
     setIoMessage(null);
     setSampleName("");
+    setFileName(null);
     editor.loadScore(
       newSatbScore({
         measureCount: opts.measureCount,
@@ -382,6 +428,7 @@ export function App() {
       }
       setIoMessage(null);
       setSampleName("");
+      setFileName(file.name);
       editor.loadScore(score);
     } catch (err) {
       if (err instanceof MusicXmlError) setIoMessage(err.message);
@@ -389,8 +436,29 @@ export function App() {
     }
   }
 
+  /** The name a "Save" (or "Save As" default) should use: the remembered filename with its
+   * extension swapped to `.pscore` (Save always writes the native format even if the
+   * document was opened from MusicXML), or one derived from the title if nothing's
+   * been saved/opened yet. */
+  function pscoreFilename(): string {
+    return fileName ? withExtension(fileName, "pscore") : `${editor.score.meta.title || "score"}.pscore`;
+  }
+
   function handleSave() {
-    downloadFile(`${editor.score.meta.title || "score"}.pscore`, serializeScore(editor.score), "application/json");
+    const name = pscoreFilename();
+    downloadFile(name, serializeScore(editor.score), "application/json");
+    setFileName(name);
+  }
+
+  function handleSaveAs() {
+    const suggested = pscoreFilename();
+    const input = window.prompt("Save as:", suggested);
+    if (input === null) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const name = extensionOf(trimmed) === "pscore" ? trimmed : withExtension(trimmed, "pscore");
+    downloadFile(name, serializeScore(editor.score), "application/json");
+    setFileName(name);
   }
 
   function handleExportMusicXml() {
@@ -485,8 +553,9 @@ export function App() {
       setImportOpen(false);
       setIoMessage(null);
       setSampleName("");
+      setFileName(null);
     },
-    [editor],
+    [editor, setFileName],
   );
 
   const handleReviewClick = useCallback(
@@ -525,7 +594,10 @@ export function App() {
     <div className="app" data-font-ready={fontReady}>
       <style>{pageSizeCss}</style>
       <header className="toolbar">
-        <span className="toolbar-title">Personal Music Notation</span>
+        <span className="toolbar-doc">
+          <span className="toolbar-title">Sheet Music Assistant</span>
+          {fileName && <span className="toolbar-filename">{fileName}</span>}
+        </span>
         <button type="button" onClick={() => setNewFormOpen((v) => !v)}>
           New
         </button>
@@ -542,6 +614,9 @@ export function App() {
         <button type="button" onClick={handleSave}>
           Save
         </button>
+        <button type="button" onClick={handleSaveAs}>
+          Save As…
+        </button>
         <button type="button" onClick={handleExportMusicXml}>
           Export MusicXML
         </button>
@@ -556,6 +631,9 @@ export function App() {
         </button>
         <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
           Shortcuts
+        </button>
+        <button type="button" onClick={() => setInfoOpen((v) => !v)} aria-pressed={infoOpen}>
+          Score Info
         </button>
         <button type="button" onClick={() => setStavesOpen((v) => !v)} aria-pressed={stavesOpen}>
           Staves
@@ -622,6 +700,9 @@ export function App() {
       )}
       <Palettes font={BRAVURA} score={editor.score} cursor={cursor} onApplyAction={editor.applyAction} />
       {helpOpen && <ShortcutsPanel onClose={() => setHelpOpen(false)} />}
+      {infoOpen && (
+        <ScoreInfoPanel meta={editor.score.meta} onApplyAction={editor.applyAction} onClose={() => setInfoOpen(false)} />
+      )}
       {stavesOpen && editor.score.parts[cursor.partIndex] && (
         <StavesPanel
           part={editor.score.parts[cursor.partIndex]!}

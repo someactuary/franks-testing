@@ -389,3 +389,36 @@ Carry-over: this strips *all* of an event's note-level decorations at once — e
 accent and an ornament on the same note both go on the first Delete — not one at a
 time; there's no way to target a single one without its own id, same limitation noted
 under "What's movable."
+
+## Editable score info, remembered filename, Save As, app rename (2026-09-18)
+
+Renamed the app from "Personal Music Notation" to "Sheet Music Assistant" (`index.html`
+title, `App.tsx`'s toolbar) — display text only, no change to the package name or repo.
+
+**Editable title/subtitle/composer/lyricist**: these were only ever set by import or
+the New Score form, with no way to edit them afterward. Added `setScoreMeta(patch)`
+(`src/commands/meta.ts`) — one command taking a `Partial<ScoreMeta>`, so each field
+commits as its own undo step (an empty string clears that field rather than storing
+it) — wired through `PaletteAction` the same way every other UI-triggered edit is
+(`src/input/types.ts`, `src/input/actions.ts`). `src/ui/ScoreInfoPanel.tsx` is a new
+toggleable panel (same open/close pattern as StavesPanel) with one text input per
+field, committing on blur, matching StavesPanel's staff-name fields exactly. Also
+discovered `lyricist` was captured in the model (including by MusicXML import) but
+never engraved anywhere — added it to `emitTitleBlock` (`engrave.ts`), top-left,
+mirroring composer's top-right placement (the usual "Words by.../Music by..."
+convention); gave it its own `"lyricist"` text style/`Ref` role rather than reusing
+`"composer"`'s, parallel to why fermata got its own role above.
+
+**Remembered filename + Save As**: the app has no File System Access API access (it's
+download-based, `input[type=file]` for Open, `<a download>` for Save) so there's no
+real "current file" concept without new state for it. Added `fileName` (React state in
+`App.tsx`, persisted to `localStorage` under `pmn.filename` the same way MIDI input
+selection already was) — set on Open (`file.name`), set to whatever name a Save/Save As
+actually wrote, and cleared on New/New SATB/loading a sample/importing a PDF (all
+"this is now a different, unsaved document" actions). Plain Save reuses it (swapping
+the extension to `.pscore` even if the document was opened from MusicXML, since Save
+always writes the native format); Save As always prompts (`window.prompt`, there's no
+in-browser save-location dialog otherwise) defaulting to the current name, and forces
+a `.pscore` extension on whatever's typed. The filename displays in the toolbar next to
+the app name (`.toolbar-doc` wrapper, `.toolbar-filename` span) and in the browser tab
+title — the two places a document's name customarily shows up.
