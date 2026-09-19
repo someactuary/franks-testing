@@ -38,7 +38,6 @@ body {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  margin-right: auto;
   overflow: hidden;
 }
 
@@ -78,6 +77,16 @@ body {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+}
+
+/* Every button that couldn't get a clear icon lives here, pushed to the toolbar's far
+ * right edge (along with whatever comes after it — MIDI, Shortcuts, Score Info) so the
+ * icon buttons stay a tight cluster next to the document name. */
+.toolbar-text-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
 }
 
 .toolbar-divider {
@@ -395,6 +404,17 @@ body {
   font-size: 1.35em;
   line-height: 1;
   vertical-align: middle;
+}
+
+/* Stacked treble/bass clef glyphs on the toolbar's Staves button. */
+.clef-icon {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.65;
+}
+.clef-icon .smufl {
+  font-size: 1em;
 }
 
 /* Staves panel */

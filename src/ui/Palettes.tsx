@@ -14,7 +14,7 @@ export interface PalettesProps {
 }
 
 /** A single glyph rendered in the Bravura font, for notation-like button labels. */
-function Smufl({ font, glyph }: { font: SmuflFontData; glyph: string }) {
+export function Smufl({ font, glyph }: { font: SmuflFontData; glyph: string }) {
   return (
     <span className="smufl" aria-hidden="true">
       {glyphChar(font, glyph)}

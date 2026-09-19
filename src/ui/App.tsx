@@ -23,7 +23,8 @@ import type { ImportedFromOmr } from "./ImportPdfDialog";
 import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { ScoreInfoPanel } from "./ScoreInfoPanel";
-import { NewIcon, OpenIcon, PrintIcon, RedoIcon, SaveIcon, UndoIcon } from "./icons";
+import { NewIcon, OpenIcon, PdfIcon, PrintIcon, RedoIcon, SaveAsIcon, SaveIcon, UndoIcon } from "./icons";
+import { Smufl } from "./Palettes";
 import { newSatbScore } from "./presets";
 import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
 import { useEditorStore } from "./store";
@@ -68,6 +69,18 @@ function clefLabel(clef: string): string {
   if (clef.startsWith("alto")) return "alto";
   if (clef.startsWith("tenor")) return "tenor";
   return clef;
+}
+
+/** Stacked treble/bass clef glyphs (Bravura, same as the notation palettes) for the
+ * Staves button — more legible at a glance than a generic staff/bracket icon would be
+ * in an app that already has real clef glyphs on hand. */
+function ClefIcon() {
+  return (
+    <span className="clef-icon" aria-hidden="true">
+      <Smufl font={BRAVURA} glyph="gClef" />
+      <Smufl font={BRAVURA} glyph="fClef" />
+    </span>
+  );
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -601,10 +614,10 @@ export function App() {
         </span>
 
         <div className="toolbar-group">
-          <button type="button" className="icon-button" title="New score" onClick={() => setNewFormOpen((v) => !v)}>
+          <button type="button" className="icon-button" title="New" onClick={() => setNewFormOpen((v) => !v)}>
             <NewIcon />
           </button>
-          <button type="button" className="icon-button" title="Open…" onClick={() => fileInputRef.current?.click()}>
+          <button type="button" className="icon-button" title="Open" onClick={() => fileInputRef.current?.click()}>
             <OpenIcon />
           </button>
           <input
@@ -617,8 +630,8 @@ export function App() {
           <button type="button" className="icon-button" title="Save" onClick={handleSave}>
             <SaveIcon />
           </button>
-          <button type="button" onClick={handleSaveAs}>
-            Save As…
+          <button type="button" className="icon-button" title="Save As" onClick={handleSaveAs}>
+            <SaveAsIcon />
           </button>
         </div>
 
@@ -647,38 +660,49 @@ export function App() {
 
         <div className="toolbar-divider" aria-hidden="true" />
 
-        <button type="button" className="icon-button" title="Print" onClick={() => window.print()}>
-          <PrintIcon />
-        </button>
-        <button type="button" onClick={handleExportMusicXml}>
-          Export MusicXML
-        </button>
-        <button type="button" onClick={() => setStavesOpen((v) => !v)} aria-pressed={stavesOpen}>
-          Staves
-        </button>
-        <button type="button" onClick={() => setImportOpen(true)}>
-          Import PDF…
-        </button>
-        <button
-          type="button"
-          onClick={() => setCompareOpen((v) => !v)}
-          aria-pressed={compareOpen}
-          disabled={!pdfSession}
-          title={pdfSession ? "Toggle the original-PDF compare panel" : "Import a PDF this session to enable comparing"}
-        >
-          Compare with PDF
-        </button>
-        <label>
-          Samples:{" "}
-          <select value={sampleName} onChange={(e) => handleSampleChange(e.target.value)}>
-            <option value="">(choose)</option>
-            {FIXTURE_NAMES.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="toolbar-group">
+          <button type="button" className="icon-button" title="Print" onClick={() => window.print()}>
+            <PrintIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="Staves"
+            aria-pressed={stavesOpen}
+            onClick={() => setStavesOpen((v) => !v)}
+          >
+            <ClefIcon />
+          </button>
+          <button type="button" className="icon-button" title="Import PDF" onClick={() => setImportOpen(true)}>
+            <PdfIcon />
+          </button>
+        </div>
+
+        <div className="toolbar-text-group">
+          <button type="button" onClick={handleExportMusicXml}>
+            Export MusicXML
+          </button>
+          <button
+            type="button"
+            onClick={() => setCompareOpen((v) => !v)}
+            aria-pressed={compareOpen}
+            disabled={!pdfSession}
+            title={pdfSession ? "Toggle the original-PDF compare panel" : "Import a PDF this session to enable comparing"}
+          >
+            Compare with PDF
+          </button>
+          <label>
+            Samples:{" "}
+            <select value={sampleName} onChange={(e) => handleSampleChange(e.target.value)}>
+              <option value="">(choose)</option>
+              {FIXTURE_NAMES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="toolbar-midi">
           {!midiSupported ? (
             <span className="toolbar-hint">{WEB_MIDI_UNSUPPORTED_MESSAGE}</span>

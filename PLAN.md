@@ -552,3 +552,23 @@ score canvas is custom SVG either way).
   future icon work here. Verified live via screenshot and a functional pass (Undo
   starts disabled, New opens the form, Save downloads, Print doesn't error, toolbar
   child order matches the requested layout).
+- 2026-09-19 (polish: toolbar icons round 2). Frank asked for real curved-arrow
+  Undo/Redo icons (the first pass's plain triangles worked but didn't read as
+  "undo" clearly), an icon for Save As, treble/bass clef glyphs for Staves, a
+  PDF-style icon for Import PDF, tooltips restored on every icon (simple labels:
+  "Save", "New", not "Save score"), and every remaining icon-less button pushed to
+  the toolbar's far right. Implemented directly: curved-arrow Undo/Redo; a
+  SaveAsIcon (a narrower floppy disk plus a separate "+", not overlapping — two
+  overlapping disks would need one to mask the other with a fill matching the
+  button's current background, which drifts on hover); a PdfIcon (generic
+  document + red "PDF" badge, not a copy of Adobe's own mark); a ClefIcon (real
+  stacked treble+bass Bravura glyphs, reusing Palettes.tsx's existing
+  glyph-as-text-character technique, now exported as `Smufl`); every icon-less
+  button now lives in one `.toolbar-text-group` with `margin-left: auto`,
+  replacing the previous `.toolbar-doc { margin-right: auto }` (which would have
+  split the leftover space between two auto-margins once both existed, pushing
+  the icon cluster toward the middle instead of flush left). Verified with a
+  zoomed screenshot of the real rendered toolbar, not just the SVG path data —
+  this is what actually confirmed the curved arrows read correctly and the clef/
+  PDF icons are legible at 16px. 880 tests still passing (no new command logic
+  this round, UI-only), lint/typecheck/build clean.

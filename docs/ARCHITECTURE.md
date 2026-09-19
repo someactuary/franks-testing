@@ -508,3 +508,38 @@ clear-on-empty-string behavior, which the original didn't have) and deleted
 `commands/meta.ts`; the `setTitle` command next to it is untouched — it's a
 long-standing minimal test fixture for undo/redo mechanics (`test/commands/history.test.ts`),
 not a real editing feature, unrelated to this.
+
+## Toolbar redesign, round 2 (2026-09-19)
+
+Cosmetic follow-up to the redesign above, all in `src/ui/icons.tsx` and `App.tsx`:
+
+- **Undo/Redo** got real curved-arrow icons (a hooked line + small arrowhead) instead
+  of the plain left/right triangles from the first pass — those worked but didn't read
+  as "undo" at a glance the way a curved arrow does.
+- **Save As** got its own icon: a narrower floppy disk plus a separate "+", not
+  overlapping it. The first idea (two overlapping floppy disks) was dropped because
+  making the front one look "on top" needs its fill to match the button's *current*
+  background (plain vs. hover), which would drift out of sync — keeping the two shapes
+  apart entirely avoids that class of bug altogether.
+- **Import PDF** got a document-with-a-"PDF"-badge icon (`PdfIcon`) — deliberately a
+  generic red badge, not a reproduction of Adobe's own PDF mark.
+- **Staves** got real treble+bass clef glyphs stacked vertically (`ClefIcon`, App.tsx),
+  reusing the same Bravura-glyph-as-text-character technique the notation palettes
+  already use for their own buttons (`Smufl` in `Palettes.tsx`, now exported for this)
+  rather than drawing a generic staff/bracket shape from scratch — more legible, and an
+  app with real clef glyphs on hand has no reason not to use them.
+- Tooltips on every icon button are now bare labels ("Save", "New", …) instead of the
+  first pass's fuller text ("New score", "Open…").
+- Every remaining button that doesn't have a clear icon (Export MusicXML, Compare with
+  PDF, Samples, MIDI, Shortcuts, Score Info) now lives in one `.toolbar-text-group`
+  with `margin-left: auto`, so it's pushed to the toolbar's far right as a block while
+  the icon buttons stay a tight cluster next to the document name — replacing the
+  first pass's `.toolbar-doc { margin-right: auto }`, which would otherwise have split
+  the leftover space between *two* auto margins once this group also had one, pushing
+  the icons toward the middle instead of keeping them flush left.
+
+Verified with a zoomed screenshot of the actual rendered toolbar (`body.style.zoom`,
+since the icons are only 16px) rather than just reading the SVG path data — this is
+what caught that the plain-triangle Undo/Redo icons from the first pass, while
+technically fine, were worth replacing with something more recognizable once actually
+compared side by side with a real curved-arrow rendering.
