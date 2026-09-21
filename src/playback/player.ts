@@ -29,6 +29,12 @@ import type { Timeline } from "./timeline";
 export interface MidiSink {
   /** Sends `bytes` at time `atMs` on the same clock as `PlayerEnv.now()` (immediately if that's already past). */
   send(bytes: number[], atMs: number): void;
+  /**
+   * Discards anything handed over but not yet sounded, and stops what is sounding — for a
+   * sink that can actually do that (the built-in sound engine can; a MIDI port mostly
+   * can't, which is why stopping also sends explicit note-offs).
+   */
+  clear?(): void;
 }
 
 export interface PlayerEnv {
@@ -217,6 +223,7 @@ export class Player {
 
   /** Ends every note and the pedal now, and again after whatever was already scheduled has fired. */
   private silence(): void {
+    this.sink.clear?.();
     const now = this.env.now();
     const later = Math.max(now, this.lastSentMs) + 10;
     for (const at of [now, later]) {

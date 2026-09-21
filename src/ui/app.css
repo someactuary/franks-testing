@@ -80,66 +80,8 @@ body {
   gap: 0.35rem;
 }
 
-.export-midi {
-  position: relative;
-}
-
-.export-midi-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 300px;
-  padding: 6px;
-  background: #24262b;
-  border: 1px solid #666;
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
-}
-
-.export-midi-menu button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  text-align: left;
-  border-color: transparent;
-  background: transparent;
-}
-
-.export-midi-menu button:hover {
-  background: #3a3d44;
-}
-
-.export-midi-menu span {
-  font-size: 0.78rem;
-  color: #aaa;
-  line-height: 1.3;
-}
-
-/* Every button that couldn't get a clear icon lives here, pushed to the toolbar's far
- * right edge (along with whatever comes after it — MIDI, Shortcuts, Score Info) so the
- * icon buttons stay a tight cluster next to the document name. */
-.toolbar-text-group {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-left: auto;
-}
-
 .speed-select {
   width: 4.6rem;
-}
-
-.midi-port {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.85rem;
-  color: #bbb;
 }
 
 .toolbar-divider {
@@ -150,6 +92,7 @@ body {
 }
 
 .icon-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -162,6 +105,179 @@ body {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
+}
+
+/* The right-hand cluster (Sound & MIDI, exports, panels) sits at the toolbar's far end. */
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+/* A small status light on an icon button: a MIDI device is connected. */
+.icon-light {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3ecf5f;
+  box-shadow: 0 0 4px rgba(62, 207, 95, 0.8);
+}
+
+/* Toolbar popover menus (Sound & MIDI) */
+.toolbar-menu {
+  position: relative;
+}
+
+.toolbar-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(23rem, 92vw);
+  padding: 0.75rem 0.85rem 0.6rem;
+  background: #24262b;
+  border: 1px solid #666;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font-size: 0.85rem;
+}
+
+.sound-menu section + section {
+  margin-top: 0.85rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid #3d4048;
+}
+
+.sound-menu h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #aaa;
+}
+
+.toolbar .sound-menu button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.segmented {
+  display: flex;
+  margin-bottom: 0.6rem;
+}
+
+.toolbar .segmented button {
+  flex: 1;
+  border-radius: 0;
+}
+.toolbar .segmented button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.toolbar .segmented button:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left-width: 0;
+}
+
+.toolbar .sound-menu [aria-pressed="true"] {
+  background: #3b6ea8;
+  border-color: #6aa1e0;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+}
+
+.toolbar .preset-grid .preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+
+.preset-name {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.preset-blurb {
+  font-size: 0.7rem;
+  line-height: 1.25;
+  color: #c4c8cf;
+  opacity: 0.85;
+}
+
+.menu-field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.65rem;
+  color: #ddd;
+}
+
+.menu-field input[type="range"] {
+  flex: 1;
+}
+
+.menu-field select {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+
+.menu-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #b4b8bf;
+}
+
+.menu-row .menu-note {
+  margin: 0;
+}
+
+.menu-error {
+  color: #ff9b8f;
+}
+
+.export-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.toolbar .export-choices .menu-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+.menu-choice span {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: #c4c8cf;
+}
+
+.menu-credit {
+  margin: 0.8rem 0 0;
+  font-size: 0.7rem;
+  color: #8d919a;
 }
 
 .toolbar select,
@@ -188,6 +304,10 @@ body {
   display: flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+.new-score-form .new-score-sample {
+  margin-left: auto;
 }
 
 .status-bar {
@@ -332,30 +452,13 @@ body {
   font-weight: 600;
 }
 
-/* MIDI toolbar control */
-.toolbar-midi {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
 .toolbar-hint {
   font-size: 0.8rem;
   color: #bbb;
 }
 
-.midi-dot {
-  display: inline-block;
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  background: #777;
-  flex: none;
-}
-
-.midi-dot-on {
-  background: #3ecf5f;
-  box-shadow: 0 0 4px rgba(62, 207, 95, 0.8);
+.toolbar-hint-error {
+  color: #ff9b8f;
 }
 
 .voice-toggle {

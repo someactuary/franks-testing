@@ -143,3 +143,58 @@ export function StopIcon() {
     </IconBase>
   );
 }
+
+/** A speaker giving off sound waves: the Sound & MIDI menu. */
+export function SoundIcon() {
+  return (
+    <IconBase>
+      <path d="M1.5 6h2.7L8 2.8v10.4L4.2 10H1.5Z" />
+      <path d="M10.3 5.6a3.4 3.4 0 0 1 0 4.8" />
+      <path d="M12.3 3.6a6.2 6.2 0 0 1 0 8.8" />
+    </IconBase>
+  );
+}
+
+/** Angle brackets around a slash: Export MusicXML. */
+export function XmlIcon() {
+  return (
+    <IconBase>
+      <path d="M5.2 4.5 1.8 8l3.4 3.5" />
+      <path d="M10.8 4.5 14.2 8l-3.4 3.5" />
+      <path d="M9.1 3 6.9 13" />
+    </IconBase>
+  );
+}
+
+/** A keyboard: Shortcuts. */
+export function KeyboardIcon() {
+  return (
+    <IconBase>
+      <rect x={1.5} y={3.5} width={13} height={9} rx={1.2} />
+      <path d="M4.2 6.5h.01M6.7 6.5h.01M9.3 6.5h.01M11.8 6.5h.01M4.2 8.8h.01M6.7 8.8h.01M9.3 8.8h.01M11.8 8.8h.01" />
+      <path d="M5.3 10.9h5.4" />
+    </IconBase>
+  );
+}
+
+/** A circled "i": Score Info. */
+export function InfoIcon() {
+  return (
+    <IconBase>
+      <circle cx={8} cy={8} r={6.2} />
+      <path d="M8 7.3v3.9" />
+      <path d="M8 4.9h.01" />
+    </IconBase>
+  );
+}
+
+/** Two pages side by side: Compare with PDF. */
+export function CompareIcon() {
+  return (
+    <IconBase>
+      <path d="M1.5 3h5.6v10H1.5Z" />
+      <path d="M8.9 3h5.6v10H8.9Z" />
+      <path d="M3.3 6h2M3.3 8.3h2M10.7 6h2M10.7 8.3h2" />
+    </IconBase>
+  );
+}

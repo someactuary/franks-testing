@@ -24,8 +24,11 @@ Score (src/model)  --engrave-->  LayoutResult (src/engraving)  --render-->  SVG 
 - `src/input` — keyboard step entry, MIDI input, mouse hit-testing → commands.
 - `src/ui` — React shell: score view, palettes, inspector.
 - `src/playback` — `buildTimeline(score)`: repeats, tie merging, tempo map, velocity,
-  pedal → plain tick-based data. Consumed by `src/io/midi` (file export) and, later, by
-  any in-app player (Web Audio / Web MIDI). See "Playback timeline and MIDI export".
+  pedal → plain tick-based data. Consumed by `src/io/midi` (file export) and by the live
+  `Player`, which feeds either a Web MIDI device or the built-in sounds. See "Playback
+  timeline and MIDI export".
+- `src/audio` — the built-in sound engine (Web Audio): nine presets, a voice manager,
+  sampled piano and synthesized instruments. See "Built-in sounds".
 
 ## Invariants
 
@@ -532,7 +535,8 @@ Cosmetic follow-up to the redesign above, all in `src/ui/icons.tsx` and `App.tsx
   app with real clef glyphs on hand has no reason not to use them.
 - Tooltips on every icon button are now bare labels ("Save", "New", …) instead of the
   first pass's fuller text ("New score", "Open…").
-- Every remaining button that doesn't have a clear icon (Export MusicXML, Compare with
+- (Superseded 2026-09-20: see "Built-in sounds and the toolbar reorganization".) Every
+  remaining button that doesn't have a clear icon (Export MusicXML, Compare with
   PDF, Samples, MIDI, Shortcuts, Score Info) now lives in one `.toolbar-text-group`
   with `margin-left: auto`, so it's pushed to the toolbar's far right as a block while
   the icon buttons stay a tight cluster next to the document name — replacing the
@@ -625,8 +629,9 @@ software, kept together in `interpret.ts` to retune by ear.
 ## Playback through a MIDI device (2026-09-20)
 
 Frank chose to hear the score on his digital piano, so playback sends the timeline to a Web
-MIDI output. (Considered and not built: in-browser piano samples, ~1.2 MB Salamander set;
-macOS-rendered audio via `scripts/render-midi.swift`.) Reuses the timeline from the section
+MIDI output. (In-browser sounds were considered and deferred at first, then built the same
+day — see "Built-in sounds"; macOS-rendered audio via `scripts/render-midi.swift` stays a
+validation tool.) Reuses the timeline from the section
 above, so what plays is exactly what "Export MIDI ▸ Performance" would write.
 
 **`src/playback/`** — `messages.ts` turns a timeline's notes and pedal into channel messages
@@ -670,3 +675,83 @@ clicked bar. **Not yet tried with a real piano** — that is the first thing to 
 the piano responds on MIDI channel 1 (the first part's channel) and honours the sustain pedal
 message.
 
+
+## Built-in sounds and the toolbar reorganization (2026-09-20)
+
+Frank asked for playback "with a basic set of sounds (ala GarageBand presets)" and for the
+busy toolbar to be tidied ("put all the MIDI things together and use icons").
+
+**`src/audio/`** — an `AudioEngine` implementing the same `MidiSink` the Player already
+drives, so the scheduler, timeline and playhead are unchanged: the sink is now "built-in
+sounds" or "MIDI device". `player.ts`'s `MidiSink` gained an optional `clear()`; the engine
+implements it (it *can* recall scheduled notes, unlike a MIDI port), and `Player.silence()`
+calls it first, still followed by the double note-off for sinks that can't.
+- `presets.ts` — the nine presets as plain data (Grand Piano, Electric Piano, Organ,
+  Harpsichord, Strings, Warm Pad, Harp, Vibraphone, Music Box) so the UI lists them without
+  touching Web Audio. `instruments.ts` — one voice factory per preset.
+- `voices.ts` — `VoiceManager`: note-on/off with sustain-pedal bookkeeping (a released key
+  keeps sounding while the pedal is down), retrigger of a held pitch, and voice stealing
+  past 40. Retrigger *splices* the old voice out of its bookkeeping before killing it,
+  otherwise a later pedal lift would "release" a dead voice. Pure and unit-tested with a
+  fake spawner.
+- `engine.ts` — the graph: voices → bus → (dry | shared convolver reverb, IR generated in
+  code, per-preset send) → compressor → make-up gain → volume → soft limiter (transparent
+  to 0.6, then a smooth curve to 0.9) → destination. The `AudioContext` is created lazily
+  from a user gesture (autoplay rules). Envelopes use `setTargetAtTime` with
+  `cancelAndHoldAtTime` on release so a release arriving mid-decay starts from the current
+  level. `send()` converts the Player's `performance.now()` timestamps to audio-clock time.
+  `preview()` plays a short arpeggio, used to audition a preset when it's clicked.
+- **Grand Piano is sampled**: the Salamander Grand Piano (Alexander Holm, CC BY 3.0), the
+  compact 30-sample Tone.js set, one sample every three semitones, ~2.3 MB of mp3 in
+  `public/samples/salamander/` (credit in that folder's README and in the Sound menu),
+  fetched and decoded on first use; other pitches play the nearest sample re-tuned with
+  `playbackRate` (at most ±1.5 semitones). The recording is a real, stretch-tuned piano, so
+  the top octave measures ~10 cents sharp of equal temperament — left as is. (Earlier I
+  told Frank the set was ~1.2 MB; it's 2.3 MB.)
+- **Everything else is synthesized**: electric piano = two-operator FM whose modulation
+  index decays (bark → mellow); organ = drawbar sines; strings/pad = detuned sawtooth
+  ensembles through a swept low-pass with slow vibrato; vibraphone/music box = decaying
+  inharmonic bar/tine partials. Harpsichord and harp are **Karplus–Strong plucks rendered
+  in JS** (`karplus.ts`) into buffers, not Web Audio delay loops (a delay in a feedback
+  loop can't be shorter than one 128-sample block, capping pitch at ~344 Hz).
+- **Karplus details worth keeping**: the classic two-point-average loop filter strangles
+  the *fundamental* of high notes (more trips per second, each losing a little), so up the
+  keyboard the filter weight `s` is cut back (`0.5·(500/f)³`, floor 0.01) and the
+  fractional part of the loop delay is made up by a first-order **allpass** rather than by
+  interpolation (which also low-passes). The seed burst has its mean removed and a ~7 Hz
+  DC-block runs over the result; at MIDI 93 a leftover DC term had put the tuning 36 cents
+  out. Tested to within 6 cents at MIDI 36-93, and for high notes not fading to nothing.
+- Calibration was done by rendering every preset offline (`OfflineAudioContext`, driven
+  from headless Chromium against the dev server) and measuring per-note tuning by
+  autocorrelation, level in a window mid-note, tail after release, NaNs and peak: all
+  synths within ~1 cent (music box reads +14 cents on low notes; inharmonic partials fool
+  the estimator), levels within a few dB of each other, peak below 0 dBFS.
+
+**UI.** `useSound` owns the engine and the choices (target `builtin | midi`, instrument,
+volume — each remembered in localStorage via the new `storage.ts`, which `useMidiPorts` and
+the filename memory now share) and gives `usePlayback` one stable sink that forwards to
+whichever target is selected (a ref kept current by the setter; the Player is built once).
+`usePlayback` now takes `{ sink, ensureOutput }` instead of the MIDI port object. Play with
+the built-in target starts the engine (loading the piano the first time, with a "Loading
+piano samples…" hint next to the transport); switching target stops playback first.
+Picking a preset auditions it unless the score is playing (then it's heard live).
+
+**Toolbar.** Left to right: document name; New / Open / Save / Save As; Undo / Redo; Print /
+Staves / Import PDF; Play / Stop / speed; then a right-aligned cluster of icons: **Sound &
+MIDI**, Export MusicXML, Compare with PDF, then Shortcuts and Score Info. All the MIDI
+things are in one popover (`ToolbarMenu` + `SoundMenu`): *Play through* (Built-in sounds |
+MIDI device) with the preset grid + volume, or the output select; *MIDI keyboard* (connect,
+input select); *Export MIDI file* (Performance | Notation-exact); the sample credit. A small
+green light on the icon means a MIDI device is connected. `ToolbarMenu` closes on an outside
+click or Escape — Escape is handled in the capture phase and stopped, so closing a menu
+doesn't also stop playback. The Samples select moved into the New-score form ("Or open a
+sample"). The cluster is one flex container so at narrow widths it wraps as a unit and
+stays right-aligned. `window.__pmnEngine` (dev builds only) exposes the engine for e2e
+checks.
+
+**Verified** in headless Chromium and real Chrome: Play with the piano schedules the
+score's notes; an `AnalyserNode` tapped on the engine's output during live playback read a
+peak of ~0.74 and ~0 after Esc; preset switching (and its audition); persistence keys;
+Escape closing the menu without stopping playback; zoomed/2x screenshots of the toolbar at
+1400 and 1000 px. **Not verified by ear** — Frank should judge the sounds; the levels and
+tuning are measured, not the taste.

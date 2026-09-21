@@ -1,15 +1,15 @@
 /**
  * React glue for playback: builds the score's timeline when Play is pressed, drives the
- * `Player` (src/playback/player.ts) against the MIDI output, and exposes the playhead
+ * `Player` (src/playback/player.ts) against a sink (the built-in sounds or a MIDI output,
+ * chosen in ./useSound.ts), and exposes the playhead
  * (a measure + offset in the *score*, so repeats show the playhead jumping back).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Cursor } from "@/input/types";
 import type { Score } from "@/model";
-import { Player, type PlayerStatus } from "@/playback/player";
+import { Player, type MidiSink, type PlayerStatus } from "@/playback/player";
 import { positionAt, tickAt, type PlayPosition } from "@/playback/position";
 import { buildTimeline, type Timeline } from "@/playback/timeline";
-import type { MidiPorts } from "./midi";
 
 export interface PlaybackState {
   status: PlayerStatus;
@@ -25,27 +25,25 @@ export interface PlaybackState {
 interface Args {
   score: Score;
   cursor: Cursor;
-  midi: MidiPorts;
-  /** Makes sure MIDI access is granted and an output is selected; false (after saying why) if it can't be. */
+  /** Where the notes go; the sink's timestamps are on the `performance.now()` clock. */
+  sink: MidiSink;
+  /** Makes sure the current target can sound (audio started, or MIDI access granted and an output selected); false (after saying why) if it can't be. */
   ensureOutput: () => Promise<boolean>;
 }
 
 /** The playhead is redrawn at most this often. */
 const FRAME_MS = 33;
 
-export function usePlayback({ score, cursor, midi, ensureOutput }: Args): PlaybackState {
+export function usePlayback({ score, cursor, sink, ensureOutput }: Args): PlaybackState {
   const [player] = useState(
     () =>
-      new Player(
-        { send: (bytes, at) => midi.send(bytes, at) },
-        {
-          now: () => midi.now(),
-          setInterval: (fn, ms) => window.setInterval(fn, ms),
-          clearInterval: (h) => window.clearInterval(h as number),
-          // A hidden tab's timers are throttled to about once a second, so look further ahead there.
-          lookaheadMs: () => (document.hidden ? 1200 : 200),
-        },
-      ),
+      new Player(sink, {
+        now: () => performance.now(),
+        setInterval: (fn, ms) => window.setInterval(fn, ms),
+        clearInterval: (h) => window.clearInterval(h as number),
+        // A hidden tab's timers are throttled to about once a second, so look further ahead there.
+        lookaheadMs: () => (document.hidden ? 1200 : 200),
+      }),
   );
   const timeline = useRef<Timeline | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("stopped");

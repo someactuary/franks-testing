@@ -57,7 +57,8 @@ personal_music_notation/
 │   ├── render/          # LayoutResult → SVG; SMuFL glyph tables
 │   ├── input/           # Keyboard step entry, MIDI input, hit-testing
 │   ├── io/              # File I/O: .pscore JSON, MusicXML, MIDI export, OMR
-│   ├── playback/        # Score → timeline: tempo map, repeats, dynamics, pedal (feeds MIDI export)
+│   ├── playback/        # Score → timeline: tempo map, repeats, dynamics, pedal; live Player
+│   ├── audio/           # Built-in sounds: Web Audio engine, 9 presets, sampled piano, plucks
 │   └── ui/              # React shell: editor, palettes, inspector
 ├── fonts/               # Bravura music font and metadata
 ├── test/

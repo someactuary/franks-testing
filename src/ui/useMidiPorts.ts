@@ -5,25 +5,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MidiPorts, type MidiInputInfo, type MidiOutputInfo } from "./midi";
+import { readSetting as read, writeSetting as write } from "./storage";
 
 const INPUT_KEY = "pmn.midiInput";
 const OUTPUT_KEY = "pmn.midiOutput";
-
-/** Best-effort localStorage: private-mode/disabled storage never throws out of here. */
-function read(key: string): string | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function write(key: string, value: string): void {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
-  } catch {
-    // best-effort only
-  }
-}
 
 export interface MidiPortsState {
   midi: MidiPorts;

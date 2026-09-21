@@ -118,6 +118,15 @@ effect (so typing never accidentally enters notes):
 | Click a note | Select it and move the cursor there |
 | Click empty staff | Move the cursor there |
 
+## Playback
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play from the cursor / pause / resume |
+| `Esc` | Stop playback |
+
+The sound (built-in presets or a MIDI device) is chosen from the speaker icon in the toolbar.
+
 ## History
 
 | Key | Action |

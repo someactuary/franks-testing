@@ -613,4 +613,19 @@ score canvas is custom SVG either way).
   jumps back; no loop, no per-hand mute, no click track; editing during playback doesn't
   change what's playing (the timeline is a snapshot from Play); in-browser samples remain
   the fallback if MIDI-out proves awkward.
-
+- 2026-09-20 (feature: built-in sounds + toolbar reorganization). Frank: "the menu options
+  are getting busy again ... put all the MIDI things together and use icons. Next thing is
+  to create playback with a basic set of sounds (ala GarageBand presets)." Added `src/audio`:
+  an `AudioEngine` (Web Audio) that is a second `MidiSink` for the existing `Player`, nine
+  presets (sampled Salamander grand piano — CC BY 3.0, ~2.3 MB in `public/samples/` — plus
+  synthesized electric piano, organ, harpsichord, strings, pad, harp, vibraphone, music box;
+  Karplus-Strong plucks rendered in JS), a tested `VoiceManager` (pedal, retrigger, voice
+  stealing), shared reverb, compressor and soft limiter. Toolbar: one "Sound & MIDI" icon
+  popover holds playback target (built-in vs MIDI device), preset grid + volume, MIDI
+  keyboard input, and both MIDI exports; Export MusicXML, Compare with PDF, Shortcuts and
+  Score Info are icon buttons at the right; Samples moved into the New form. Choices persist
+  in localStorage. 1067 tests (30 in `test/audio`). Verified in headless Chromium and real
+  Chrome with a tap on the live output. Carry-overs: sounds are judged by measurement, not
+  yet by Frank's ear (expect tweaks to levels/tone); notes entered by mouse/MIDI keyboard
+  aren't sounded (only the score playback is); no per-part instrument choice (one sound for
+  the whole score); real-piano MIDI test still pending.

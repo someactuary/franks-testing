@@ -25,6 +25,9 @@ import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { ScoreInfoPanel } from "./ScoreInfoPanel";
 import {
+  CompareIcon,
+  InfoIcon,
+  KeyboardIcon,
   NewIcon,
   OpenIcon,
   PauseIcon,
@@ -34,8 +37,10 @@ import {
   RedoIcon,
   SaveAsIcon,
   SaveIcon,
+  SoundIcon,
   StopIcon,
   UndoIcon,
+  XmlIcon,
 } from "./icons";
 import { Smufl } from "./Palettes";
 import { newSatbScore } from "./presets";
@@ -46,7 +51,11 @@ import { handleAction } from "@/input/actions";
 import { handleMidiNote } from "@/input/midi-entry";
 import { WEB_MIDI_UNSUPPORTED_MESSAGE } from "./midi";
 import { useMidiPorts } from "./useMidiPorts";
+import { useSound, type PlaybackTarget } from "./useSound";
+import { SoundMenu } from "./SoundMenu";
+import { ToolbarMenu } from "./ToolbarMenu";
 import { usePlayback } from "./usePlayback";
+import { readSetting, writeSetting } from "./storage";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
@@ -119,26 +128,6 @@ function withExtension(name: string, ext: string): string {
   return `${base}.${ext}`;
 }
 
-/** Best-effort localStorage read/write: private-mode/disabled storage never throws out here. */
-/** The last saved/opened filename, remembered across reloads so "Save" doesn't re-ask. */
-function readStoredFilename(): string | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage.getItem(FILENAME_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredFilename(name: string | null): void {
-  try {
-    if (typeof localStorage === "undefined") return;
-    if (name) localStorage.setItem(FILENAME_STORAGE_KEY, name);
-    else localStorage.removeItem(FILENAME_STORAGE_KEY);
-  } catch {
-    // best-effort only
-  }
-}
-
 /** Triggers a browser download of `content` as `filename`. */
 function downloadFile(filename: string, content: BlobPart, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType });
@@ -155,10 +144,11 @@ function downloadFile(filename: string, content: BlobPart, mimeType: string): vo
 interface NewScoreFormProps {
   onCreate: (opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) => void;
   onCreateSatb: (opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) => void;
+  onOpenSample: (name: string) => void;
   onCancel: () => void;
 }
 
-function NewScoreForm({ onCreate, onCreateSatb, onCancel }: NewScoreFormProps) {
+function NewScoreForm({ onCreate, onCreateSatb, onOpenSample, onCancel }: NewScoreFormProps) {
   const [measureCount, setMeasureCount] = useState(8);
   const [timeSigLabel, setTimeSigLabel] = useState(TIME_SIG_OPTIONS[0]!.label);
   const [keySigFifths, setKeySigFifths] = useState(0);
@@ -214,6 +204,17 @@ function NewScoreForm({ onCreate, onCreateSatb, onCancel }: NewScoreFormProps) {
       <button type="button" onClick={() => onCreateSatb(currentOpts())} title="4 staves: Soprano/Alto/Tenor/Bass">
         New SATB
       </button>
+      <label className="new-score-sample">
+        Or open a sample:{" "}
+        <select value="" onChange={(e) => e.target.value && onOpenSample(e.target.value)}>
+          <option value="">(choose)</option>
+          {FIXTURE_NAMES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
       <button type="button" onClick={onCancel}>
         Cancel
       </button>
@@ -223,20 +224,18 @@ function NewScoreForm({ onCreate, onCreateSatb, onCancel }: NewScoreFormProps) {
 
 export function App() {
   const [fontReady, setFontReady] = useState(false);
-  const [sampleName, setSampleName] = useState("");
   const [newFormOpen, setNewFormOpen] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [midiMenuOpen, setMidiMenuOpen] = useState(false);
   const [stavesOpen, setStavesOpen] = useState(false);
   // The name last opened/saved as, remembered across reloads (localStorage) so "Save"
   // reuses it instead of re-deriving one from the title every time; "Save As" always
   // prompts for a new one. Null means this document has never been saved.
-  const [fileName, setFileNameState] = useState<string | null>(() => readStoredFilename());
+  const [fileName, setFileNameState] = useState<string | null>(() => readSetting(FILENAME_STORAGE_KEY));
   const setFileName = useCallback((name: string | null) => {
     setFileNameState(name);
-    writeStoredFilename(name);
+    writeSetting(FILENAME_STORAGE_KEY, name);
   }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -266,8 +265,17 @@ export function App() {
     };
   }, []);
 
-  /** Play needs MIDI access and an output; this asks for the former if needed and explains if the latter is missing. */
+  const sound = useSound(midi);
+  /** Play needs a sound to play through: the built-in engine started, or MIDI access and an output. Says why if not. */
   const ensureOutput = useCallback(async (): Promise<boolean> => {
+    if (sound.target === "builtin") {
+      if (await sound.ensureReady()) {
+        setIoMessage(null);
+        return true;
+      }
+      setIoMessage("The built-in sounds couldn't start — try another sound, or play through a MIDI device.");
+      return false;
+    }
     if (!ports.supported) {
       setIoMessage(WEB_MIDI_UNSUPPORTED_MESSAGE);
       return false;
@@ -280,8 +288,17 @@ export function App() {
     if (!midi.hasOutput()) ports.selectOutput(midi.outputs()[0]!.id);
     setIoMessage(null);
     return true;
-  }, [ports, midi]);
-  const playback = usePlayback({ score: editor.score, cursor: editor.cursor, midi, ensureOutput });
+  }, [sound, ports, midi]);
+  const playback = usePlayback({ score: editor.score, cursor: editor.cursor, sink: sound.sink, ensureOutput });
+  const { stop: stopPlayback } = playback;
+  /** Switching where playback goes ends what is playing, so nothing is left ringing on the other side. */
+  const changeTarget = useCallback(
+    (target: PlaybackTarget) => {
+      stopPlayback();
+      sound.setTarget(target);
+    },
+    [stopPlayback, sound],
+  );
 
   const { applyMidi } = editor;
   useEffect(() => {
@@ -302,6 +319,18 @@ export function App() {
       delete w.__pmnMidiTest;
     };
   }, [applyMidi]);
+
+  // Dev-only: exposes the built-in sound engine so an end-to-end script can check that
+  // notes are actually being started (see window.__pmnEngine.notesStarted).
+  const { engine: soundEngine } = sound;
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __pmnEngine?: typeof soundEngine };
+    w.__pmnEngine = soundEngine;
+    return () => {
+      delete w.__pmnEngine;
+    };
+  }, [soundEngine]);
 
   // Dev-only test hook to preview lyric-mode UI: the real L-key handler
   // (src/input/step-entry.ts) hasn't landed yet, so there's no in-app way to enter
@@ -338,22 +367,6 @@ export function App() {
     return `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }`;
   }, [layout]);
 
-  // The Export MIDI menu closes on Escape or a click anywhere outside it.
-  useEffect(() => {
-    if (!midiMenuOpen) return;
-    const close = (e: Event) => {
-      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
-      if (e instanceof MouseEvent && (e.target as HTMLElement | null)?.closest(".export-midi")) return;
-      setMidiMenuOpen(false);
-    };
-    window.addEventListener("keydown", close);
-    window.addEventListener("mousedown", close);
-    return () => {
-      window.removeEventListener("keydown", close);
-      window.removeEventListener("mousedown", close);
-    };
-  }, [midiMenuOpen]);
-
   // The browser tab is the customary place a document's filename shows up alongside
   // the app name (Word, Google Docs, etc.).
   useEffect(() => {
@@ -387,21 +400,20 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [applyKey, playback]);
 
-  const handleSampleChange = useCallback(
+  const handleOpenSample = useCallback(
     (name: string) => {
-      setSampleName(name);
       const make = FIXTURES[name];
       if (!make) return;
       setIoMessage(null);
       setFileName(null);
       editor.loadScore(make());
+      setNewFormOpen(false);
     },
     [editor, setFileName],
   );
 
   function handleNewScore(opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) {
     setIoMessage(null);
-    setSampleName("");
     setFileName(null);
     editor.newScore({
       measureCount: opts.measureCount,
@@ -413,7 +425,6 @@ export function App() {
 
   function handleNewSatb(opts: { measureCount: number; timeSig: TimeSignature; keySigFifths: number }) {
     setIoMessage(null);
-    setSampleName("");
     setFileName(null);
     editor.loadScore(
       newSatbScore({
@@ -441,8 +452,7 @@ export function App() {
         score = parseScore(await file.text());
       }
       setIoMessage(null);
-      setSampleName("");
-      setFileName(file.name);
+        setFileName(file.name);
       editor.loadScore(score);
     } catch (err) {
       if (err instanceof MusicXmlError) setIoMessage(err.message);
@@ -481,7 +491,6 @@ export function App() {
   }
 
   function handleExportMidi(interpretation: "expressive" | "literal") {
-    setMidiMenuOpen(false);
     try {
       downloadFile(exportFilename("mid"), exportMidi(editor.score, { interpretation }), "audio/midi");
       setIoMessage(null);
@@ -581,8 +590,7 @@ export function App() {
       setPdfSession(result.pdfBytes ? { bytes: result.pdfBytes, filename: result.pdfFilename } : null);
       setImportOpen(false);
       setIoMessage(null);
-      setSampleName("");
-      setFileName(null);
+        setFileName(null);
     },
     [editor, setFileName],
   );
@@ -729,123 +737,75 @@ export function App() {
           </select>
         </div>
 
-        <div className="toolbar-text-group">
-          <button type="button" onClick={handleExportMusicXml}>
-            Export MusicXML
-          </button>
-          <div className="export-midi">
-            <button
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={midiMenuOpen}
-              onClick={() => setMidiMenuOpen((v) => !v)}
+        {(sound.status.state === "loading" || sound.status.state === "error") && sound.target === "builtin" && (
+          <span className={`toolbar-hint${sound.status.state === "error" ? " toolbar-hint-error" : ""}`}>
+            {sound.status.state === "loading" ? (sound.status.message ?? "Loading…") : "Sound unavailable"}
+          </span>
+        )}
+
+        <div className="toolbar-end">
+          <div className="toolbar-group">
+            <ToolbarMenu
+              title="Sound & MIDI"
+              icon={<SoundIcon />}
+              lit={sound.target === "midi" ? ports.outputId !== null : ports.inputId !== null}
             >
-              Export MIDI ▾
-            </button>
-            {midiMenuOpen && (
-              <div className="export-midi-menu" role="menu">
-                <button type="button" role="menuitem" onClick={() => handleExportMidi("expressive")}>
-                  <strong>Performance</strong>
-                  <span>Articulations, ornaments, arpeggios, fermatas and ritardandos played out — for listening.</span>
-                </button>
-                <button type="button" role="menuitem" onClick={() => handleExportMidi("literal")}>
-                  <strong>Notation-exact</strong>
-                  <span>Every note exactly as written — for carrying into another notation program.</span>
-                </button>
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setCompareOpen((v) => !v)}
-            aria-pressed={compareOpen}
-            disabled={!pdfSession}
-            title={pdfSession ? "Toggle the original-PDF compare panel" : "Import a PDF this session to enable comparing"}
-          >
-            Compare with PDF
-          </button>
-          <label>
-            Samples:{" "}
-            <select value={sampleName} onChange={(e) => handleSampleChange(e.target.value)}>
-              <option value="">(choose)</option>
-              {FIXTURE_NAMES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="toolbar-midi">
-          {!ports.supported ? (
-            <span className="toolbar-hint">{WEB_MIDI_UNSUPPORTED_MESSAGE}</span>
-          ) : !ports.granted ? (
-            <button
-              type="button"
-              title="Connect a MIDI keyboard or piano: play notes in, and play the score back on it"
-              onClick={() => void ports.connect()}
-            >
-              Connect MIDI
-            </button>
-          ) : (
-            <>
-              <span
-                className={`midi-dot${ports.inputId || ports.outputId ? " midi-dot-on" : ""}`}
-                title={ports.inputId || ports.outputId ? "MIDI connected" : "No MIDI device found"}
-                aria-hidden="true"
-              />
-              {ports.inputs.length === 0 && ports.outputs.length === 0 ? (
-                <span className="toolbar-hint">No MIDI devices</span>
-              ) : (
-                <>
-                  <label className="midi-port" title="Notes you play on this device are entered into the score">
-                    In
-                    <select
-                      aria-label="MIDI input"
-                      value={ports.inputId ?? ""}
-                      onChange={(e) => ports.selectInput(e.target.value || null)}
-                    >
-                      <option value="">(none)</option>
-                      {ports.inputs.map((input) => (
-                        <option key={input.id} value={input.id}>
-                          {input.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="midi-port" title="Playback is sent to this device">
-                    Out
-                    <select
-                      aria-label="MIDI output"
-                      value={ports.outputId ?? ""}
-                      onChange={(e) => ports.selectOutput(e.target.value || null)}
-                    >
-                      <option value="">(none)</option>
-                      {ports.outputs.map((output) => (
-                        <option key={output.id} value={output.id}>
-                          {output.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
+              {() => (
+                <SoundMenu
+                  sound={sound}
+                  ports={ports}
+                  playing={playback.status === "playing"}
+                  onChangeTarget={changeTarget}
+                  onExportMidi={handleExportMidi}
+                />
               )}
-            </>
-          )}
-          {ports.error && <span className="toolbar-hint">{ports.error}</span>}
+            </ToolbarMenu>
+            <button type="button" className="icon-button" title="Export MusicXML" onClick={handleExportMusicXml}>
+              <XmlIcon />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setCompareOpen((v) => !v)}
+              aria-pressed={compareOpen}
+              disabled={!pdfSession}
+              title={pdfSession ? "Compare with the original PDF" : "Compare with PDF (import a PDF this session to enable)"}
+            >
+              <CompareIcon />
+            </button>
+          </div>
+
+          <div className="toolbar-divider" aria-hidden="true" />
+
+          <div className="toolbar-group">
+            <button
+              type="button"
+              className="icon-button"
+              title="Keyboard shortcuts"
+              onClick={() => setHelpOpen((v) => !v)}
+              aria-pressed={helpOpen}
+            >
+              <KeyboardIcon />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title="Score info (title, composer…)"
+              onClick={() => setInfoOpen((v) => !v)}
+              aria-pressed={infoOpen}
+            >
+              <InfoIcon />
+            </button>
+          </div>
         </div>
-
-        <div className="toolbar-divider" aria-hidden="true" />
-
-        <button type="button" onClick={() => setHelpOpen((v) => !v)} aria-pressed={helpOpen}>
-          Shortcuts
-        </button>
-        <button type="button" onClick={() => setInfoOpen((v) => !v)} aria-pressed={infoOpen}>
-          Score Info
-        </button>
       </header>
       {newFormOpen && (
-        <NewScoreForm onCreate={handleNewScore} onCreateSatb={handleNewSatb} onCancel={() => setNewFormOpen(false)} />
+        <NewScoreForm
+          onCreate={handleNewScore}
+          onCreateSatb={handleNewSatb}
+          onOpenSample={handleOpenSample}
+          onCancel={() => setNewFormOpen(false)}
+        />
       )}
       <Palettes font={BRAVURA} score={editor.score} cursor={cursor} onApplyAction={editor.applyAction} />
       {helpOpen && <ShortcutsPanel onClose={() => setHelpOpen(false)} />}
