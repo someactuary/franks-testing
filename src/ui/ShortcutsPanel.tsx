@@ -66,6 +66,13 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: "Playback",
+    rows: [
+      ["Space", "Play from the cursor / pause / resume"],
+      ["Esc", "Stop playback"],
+    ],
+  },
+  {
     title: "Navigate",
     rows: [
       ["← / →", "Previous / next note"],

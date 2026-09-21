@@ -24,7 +24,19 @@ import type { ImportedFromOmr } from "./ImportPdfDialog";
 import { ComparePanel } from "./ComparePanel";
 import { Palettes } from "./Palettes";
 import { ScoreInfoPanel } from "./ScoreInfoPanel";
-import { NewIcon, OpenIcon, PdfIcon, PrintIcon, RedoIcon, SaveAsIcon, SaveIcon, UndoIcon } from "./icons";
+import {
+  NewIcon,
+  OpenIcon,
+  PauseIcon,
+  PdfIcon,
+  PlayIcon,
+  PrintIcon,
+  RedoIcon,
+  SaveAsIcon,
+  SaveIcon,
+  StopIcon,
+  UndoIcon,
+} from "./icons";
 import { Smufl } from "./Palettes";
 import { newSatbScore } from "./presets";
 import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
@@ -32,13 +44,13 @@ import { useEditorStore } from "./store";
 import { handleKey } from "@/input/step-entry";
 import { handleAction } from "@/input/actions";
 import { handleMidiNote } from "@/input/midi-entry";
-import { MidiInputs, WEB_MIDI_UNSUPPORTED_MESSAGE } from "./midi";
-import type { MidiInputInfo } from "./midi";
+import { WEB_MIDI_UNSUPPORTED_MESSAGE } from "./midi";
+import { useMidiPorts } from "./useMidiPorts";
+import { usePlayback } from "./usePlayback";
 import { hitTestPoint, locateEvent } from "./layout-utils";
 import "./app.css";
 import "./print.css";
 
-const MIDI_INPUT_STORAGE_KEY = "pmn.midiInput";
 const FILENAME_STORAGE_KEY = "pmn.filename";
 
 const FIXTURE_NAMES = Object.keys(FIXTURES);
@@ -108,22 +120,6 @@ function withExtension(name: string, ext: string): string {
 }
 
 /** Best-effort localStorage read/write: private-mode/disabled storage never throws out here. */
-function readStoredMidiInput(): string | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage.getItem(MIDI_INPUT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredMidiInput(id: string): void {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.setItem(MIDI_INPUT_STORAGE_KEY, id);
-  } catch {
-    // best-effort only
-  }
-}
-
 /** The last saved/opened filename, remembered across reloads so "Save" doesn't re-ask. */
 function readStoredFilename(): string | null {
   try {
@@ -253,13 +249,8 @@ export function App() {
   const initialScore = useMemo(() => newPianoScore(), []);
   const editor = useEditorStore(initialScore, handleKey, handleAction, handleMidiNote);
 
-  const [midi] = useState(() => new MidiInputs());
-  const [midiSupported] = useState(() => midi.isSupported());
-  const [midiGranted, setMidiGranted] = useState(false);
-  const [midiInputsList, setMidiInputsList] = useState<MidiInputInfo[]>([]);
-  const [midiSelectedId, setMidiSelectedId] = useState<string | null>(null);
-  const [midiError, setMidiError] = useState<string | null>(null);
-  const midiSelectedRef = useRef<string | null>(null);
+  const ports = useMidiPorts();
+  const { midi } = ports;
 
   useEffect(() => {
     let cancelled = false;
@@ -275,41 +266,22 @@ export function App() {
     };
   }, []);
 
-  const selectMidiInput = useCallback(
-    (id: string | null) => {
-      midi.select(id);
-      midiSelectedRef.current = id;
-      setMidiSelectedId(id);
-      if (id) writeStoredMidiInput(id);
-    },
-    [midi],
-  );
-
-  /** Re-reads the visible input ports (initial grant, and every hot-plug event) and keeps a valid selection: the previous pick if it's still there, else the remembered localStorage id, else the first input. */
-  const refreshMidiInputs = useCallback(() => {
-    const list = midi.inputs();
-    setMidiInputsList(list);
-    const current = midiSelectedRef.current;
-    if (current && list.some((i) => i.id === current)) return; // still connected, MidiInputs already has it selected
-    const stored = readStoredMidiInput();
-    const next = (stored && list.some((i) => i.id === stored) ? stored : list[0]?.id) ?? null;
-    selectMidiInput(next);
-  }, [midi, selectMidiInput]);
-
-  async function handleConnectMidi() {
-    setMidiError(null);
-    try {
-      await midi.request();
-      setMidiGranted(true);
-      refreshMidiInputs();
-    } catch (err) {
-      setMidiError(err instanceof Error ? err.message : String(err));
+  /** Play needs MIDI access and an output; this asks for the former if needed and explains if the latter is missing. */
+  const ensureOutput = useCallback(async (): Promise<boolean> => {
+    if (!ports.supported) {
+      setIoMessage(WEB_MIDI_UNSUPPORTED_MESSAGE);
+      return false;
     }
-  }
-
-  useEffect(() => {
-    return midi.onStateChange(() => refreshMidiInputs());
-  }, [midi, refreshMidiInputs]);
+    if (!ports.granted && !(await ports.connect())) return false;
+    if (midi.outputs().length === 0) {
+      setIoMessage("No MIDI output found — plug in your piano (or a MIDI synth) and try again.");
+      return false;
+    }
+    if (!midi.hasOutput()) ports.selectOutput(midi.outputs()[0]!.id);
+    setIoMessage(null);
+    return true;
+  }, [ports, midi]);
+  const playback = usePlayback({ score: editor.score, cursor: editor.cursor, midi, ensureOutput });
 
   const { applyMidi } = editor;
   useEffect(() => {
@@ -398,12 +370,22 @@ export function App() {
         mod: isMac() ? e.metaKey : e.ctrlKey,
         alt: e.altKey,
       };
+      if (e.key === "Escape") playback.stop();
       const handled = applyKey(stroke);
-      if (handled) e.preventDefault();
+      if (handled) {
+        e.preventDefault();
+        return;
+      }
+      if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // A focused toolbar button would otherwise also be "clicked" by this Space's key-up.
+        if (e.target instanceof HTMLButtonElement) e.target.blur();
+        e.preventDefault();
+        playback.toggle();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [applyKey]);
+  }, [applyKey, playback]);
 
   const handleSampleChange = useCallback(
     (name: string) => {
@@ -711,6 +693,42 @@ export function App() {
           </button>
         </div>
 
+        <div className="toolbar-divider" aria-hidden="true" />
+
+        <div className="toolbar-group">
+          <button
+            type="button"
+            className="icon-button"
+            title={playback.status === "playing" ? "Pause (Space)" : "Play from the cursor (Space)"}
+            aria-pressed={playback.status === "playing"}
+            onClick={playback.toggle}
+          >
+            {playback.status === "playing" ? <PauseIcon /> : <PlayIcon />}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="Stop (Esc)"
+            disabled={playback.status === "stopped"}
+            onClick={playback.stop}
+          >
+            <StopIcon />
+          </button>
+          <select
+            className="speed-select"
+            aria-label="Playback speed"
+            title="Playback speed"
+            value={playback.speed}
+            onChange={(e) => playback.setSpeed(Number(e.target.value))}
+          >
+            {[0.5, 0.75, 0.9, 1, 1.1, 1.25].map((v) => (
+              <option key={v} value={v}>
+                {Math.round(v * 100)}%
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="toolbar-text-group">
           <button type="button" onClick={handleExportMusicXml}>
             Export MusicXML
@@ -759,37 +777,62 @@ export function App() {
           </label>
         </div>
         <div className="toolbar-midi">
-          {!midiSupported ? (
+          {!ports.supported ? (
             <span className="toolbar-hint">{WEB_MIDI_UNSUPPORTED_MESSAGE}</span>
-          ) : !midiGranted ? (
-            <button type="button" onClick={() => void handleConnectMidi()}>
+          ) : !ports.granted ? (
+            <button
+              type="button"
+              title="Connect a MIDI keyboard or piano: play notes in, and play the score back on it"
+              onClick={() => void ports.connect()}
+            >
               Connect MIDI
             </button>
           ) : (
             <>
               <span
-                className={`midi-dot${midiSelectedId ? " midi-dot-on" : ""}`}
-                title={midiSelectedId ? "MIDI input connected" : "No MIDI input selected"}
+                className={`midi-dot${ports.inputId || ports.outputId ? " midi-dot-on" : ""}`}
+                title={ports.inputId || ports.outputId ? "MIDI connected" : "No MIDI device found"}
                 aria-hidden="true"
               />
-              {midiInputsList.length === 0 ? (
-                <span className="toolbar-hint">No MIDI inputs</span>
+              {ports.inputs.length === 0 && ports.outputs.length === 0 ? (
+                <span className="toolbar-hint">No MIDI devices</span>
               ) : (
-                <select
-                  aria-label="MIDI input"
-                  value={midiSelectedId ?? ""}
-                  onChange={(e) => selectMidiInput(e.target.value || null)}
-                >
-                  {midiInputsList.map((input) => (
-                    <option key={input.id} value={input.id}>
-                      {input.name}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <label className="midi-port" title="Notes you play on this device are entered into the score">
+                    In
+                    <select
+                      aria-label="MIDI input"
+                      value={ports.inputId ?? ""}
+                      onChange={(e) => ports.selectInput(e.target.value || null)}
+                    >
+                      <option value="">(none)</option>
+                      {ports.inputs.map((input) => (
+                        <option key={input.id} value={input.id}>
+                          {input.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="midi-port" title="Playback is sent to this device">
+                    Out
+                    <select
+                      aria-label="MIDI output"
+                      value={ports.outputId ?? ""}
+                      onChange={(e) => ports.selectOutput(e.target.value || null)}
+                    >
+                      <option value="">(none)</option>
+                      {ports.outputs.map((output) => (
+                        <option key={output.id} value={output.id}>
+                          {output.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
               )}
             </>
           )}
-          {midiError && <span className="toolbar-hint">{midiError}</span>}
+          {ports.error && <span className="toolbar-hint">{ports.error}</span>}
         </div>
 
         <div className="toolbar-divider" aria-hidden="true" />
@@ -830,6 +873,7 @@ export function App() {
             onSelectMany={handleSelectMany}
             onDragPitch={handleDragPitch}
             onDragMarking={handleDragMarking}
+            playhead={playback.playhead}
           />
         </main>
         {compareOpen && pdfSession && (

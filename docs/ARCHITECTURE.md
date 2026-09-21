@@ -621,3 +621,52 @@ Not modeled: glissando spans, two-note (fingered) tremolo, half pedal, D.C./D.S.
 text-only crescendo/diminuendo without a hairpin. Interpretation numbers (velocities for
 each dynamic, articulation lengths, ramp depths) are conventional ones from notation
 software, kept together in `interpret.ts` to retune by ear.
+
+## Playback through a MIDI device (2026-09-20)
+
+Frank chose to hear the score on his digital piano, so playback sends the timeline to a Web
+MIDI output. (Considered and not built: in-browser piano samples, ~1.2 MB Salamander set;
+macOS-rendered audio via `scripts/render-midi.swift`.) Reuses the timeline from the section
+above, so what plays is exactly what "Export MIDI ▸ Performance" would write.
+
+**`src/playback/`** — `messages.ts` turns a timeline's notes and pedal into channel messages
+and owns the same-tick ordering (note-off, pedal lift, pedal press, note-on); the file
+writer and the player both use it, so a saved file and a live performance can't disagree.
+`tempo-clock.ts` converts ticks <-> seconds through the tempo map both ways (binary search).
+`position.ts` maps a tick to a score measure + offset (what a playhead needs, following
+repeats) and a cursor position to a start tick. `player.ts` is the transport, written against
+an injected sink/clock/timer so it's tested with a fake clock (no browser, no device): a
+look-ahead scheduler — a 25 ms timer hands the sink every message due in the next 200 ms
+(1.2 s when the tab is hidden, since hidden tabs' timers are throttled to ~1 s), each with its
+exact timestamp, so musical timing doesn't depend on timer jitter. A message already handed
+to Web MIDI can't be reliably recalled (`MIDIOutput.clear()` isn't dependable across
+browsers), so **stop sends note-offs and a pedal lift twice** — now, and again just after the
+last message already scheduled — otherwise a note scheduled but not yet fired would sound
+after Stop and stick. Starting mid-piece re-presses the sustain pedal if the music had it
+down there. Speed scales real time only. **Only notes and sustain are sent — no program
+change, volume or pan**, unlike the file, so the piano keeps the sound and volume it's set to.
+
+**UI.** `MidiInputs` became `MidiPorts` (`src/ui/midi.ts`) and gained output listing/
+selection and a `send(bytes, atMs)` whose timestamps are on `performance.now()`'s clock (Web
+MIDI's); it swallows a send to a port that vanished mid-playback rather than throwing into
+the timer. `useMidiPorts` (the port state, moved out of `App.tsx` along with the input logic)
+remembers the chosen input and output in localStorage; with nothing remembered it plays on
+the output whose *name matches the selected input*, since a digital piano shows up as both.
+`usePlayback` builds the timeline at Play time from the current score, mirrors the player's
+status via its `subscribe` (so no `setState` in an effect), and follows it with a
+`requestAnimationFrame` loop throttled to ~30 Hz. Toolbar: Play/Pause and Stop icons (Space
+toggles, Esc stops; Space blurs a focused toolbar button so its key-up doesn't also "click"
+it), a speed select (50-125%), and labelled In / Out device selects. Play from the cursor
+(the note you last clicked). `ScoreView` draws the playhead as an orange line across the
+whole system, interpolated between note columns, and scrolls to follow it instead of the
+cursor while playing. Play asks for MIDI access on first use (a user gesture) and says why
+if there is no output. The toolbar now wraps to two rows instead of overflowing.
+
+**Verified** in the real app with a fake Web MIDI piano injected into the page (headless
+Chrome has no MIDI devices) that records every message and timestamp: notes at exact tempo
+spacing, handed over 79-200 ms before they're due, no program/volume/pan, silence messages on
+stop; Play/Pause/Space/Stop states, a frozen playhead while paused, Play starting at the
+clicked bar. **Not yet tried with a real piano** — that is the first thing to check: whether
+the piano responds on MIDI channel 1 (the first part's channel) and honours the sustain pedal
+message.
+

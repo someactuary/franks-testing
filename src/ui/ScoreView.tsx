@@ -4,6 +4,7 @@ import type { LayoutResult, Ref } from "@/engraving/layout-types";
 import { renderPages } from "@/render/svg";
 import type { SmuflFontData } from "@/render/smufl/types";
 import type { Cursor, Selection } from "@/input/types";
+import type { PlayPosition } from "@/playback/position";
 import {
   cursorX,
   findSystemForMeasure,
@@ -41,6 +42,8 @@ export interface ScoreViewProps {
   onDragPitch?: (noteId: string, diatonicDelta: number) => void;
   /** Fired when dragging a movable marking (see `MOVABLE_ROLES`) completes with a non-zero movement; `dx`/`dy` are the drag's own delta in page-space sp, to be added to whatever offset the marking already has. */
   onDragMarking?: (id: string, dx: number, dy: number) => void;
+  /** Where playback is; drawn as a line across the whole system, and the view follows it. Null/absent when not playing. */
+  playhead?: PlayPosition | null;
 }
 
 const CURSOR_COLOR = "#2f7cf6";
@@ -51,6 +54,13 @@ const CURSOR_OPACITY = 0.55;
 const CURSOR_OVERHANG_SP = 0.5;
 /** Cursor sits just before the column, not through the note/rest glyph. */
 const CURSOR_X_OFFSET_SP = 0.6;
+
+const PLAYHEAD_COLOR = "#e8590c";
+const PLAYHEAD_WIDTH_SP = 0.22;
+const PLAYHEAD_OPACITY = 0.9;
+const PLAYHEAD_OVERHANG_SP = 1;
+/** Like the cursor, the playhead sits just before its column rather than through the notehead. */
+const PLAYHEAD_X_OFFSET_SP = 0.3;
 
 const SELECTION_COLOR = "#2f7cf6";
 const SELECTION_PADDING_SP = 0.35;
@@ -162,6 +172,7 @@ export function ScoreView({
   onSelectMany,
   onDragPitch,
   onDragMarking,
+  playhead,
 }: ScoreViewProps) {
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const dragRef = useRef<DragStart | null>(null);
@@ -192,12 +203,14 @@ export function ScoreView({
   // currently sits, which usually isn't what the user was just looking at. So the
   // effect first checks whether the cursor's measure genuinely changed since the last
   // time it actually scrolled for one, and does nothing when it hasn't.
+  //
+  // While playing, the view follows the playhead instead of the cursor.
   const lastScrolledMeasure = useRef<number | undefined>(undefined);
-  const cursorMeasure = cursor?.measureIndex;
+  const followMeasure = playhead?.measureIndex ?? cursor?.measureIndex;
   useEffect(() => {
-    if (cursorMeasure === undefined || cursorMeasure === lastScrolledMeasure.current) return;
-    lastScrolledMeasure.current = cursorMeasure;
-    const loc = findSystemForMeasure(layout, cursorMeasure);
+    if (followMeasure === undefined || followMeasure === lastScrolledMeasure.current) return;
+    lastScrolledMeasure.current = followMeasure;
+    const loc = findSystemForMeasure(layout, followMeasure);
     if (!loc) return;
     const pageEl = pageRefs.current[loc.page.index];
     const svg = pageEl?.querySelector("svg");
@@ -215,7 +228,7 @@ export function ScoreView({
     if (top < view.top) delta = top - view.top;
     else if (bottom > view.bottom) delta = Math.min(bottom - view.bottom, top - view.top);
     if (delta !== 0) scroller.scrollBy({ top: delta, behavior: "smooth" });
-  }, [cursorMeasure, layout]);
+  }, [followMeasure, layout]);
 
   const cursorLine = useMemo(() => {
     if (!cursor || !entryActive) return null;
@@ -231,6 +244,20 @@ export function ScoreView({
     const color = cursor.voiceIndex === 1 ? ACTIVE_VOICE_CURSOR_COLOR : CURSOR_COLOR;
     return { pageIndex: loc.page.index, x, y1: topY, y2: bottomY, color };
   }, [layout, cursor, entryActive]);
+
+  const playheadLine = useMemo(() => {
+    if (!playhead) return null;
+    const loc = findSystemForMeasure(layout, playhead.measureIndex);
+    const first = loc?.system.staves[0];
+    const last = loc?.system.staves[loc.system.staves.length - 1];
+    if (!loc || !first || !last) return null;
+    return {
+      pageIndex: loc.page.index,
+      x: loc.system.x + cursorX(loc.measure, playhead.offset) - PLAYHEAD_X_OFFSET_SP,
+      y1: loc.system.y + first.y - PLAYHEAD_OVERHANG_SP,
+      y2: loc.system.y + last.y + (last.lineCount - 1) + PLAYHEAD_OVERHANG_SP,
+    };
+  }, [layout, playhead]);
 
   const boxesByPage = useMemo(() => {
     const map = new Map<number, { x: number; y: number; w: number; h: number }[]>();
@@ -405,6 +432,18 @@ export function ScoreView({
                   stroke={cursorLine.color}
                   strokeOpacity={CURSOR_OPACITY}
                   strokeWidth={CURSOR_WIDTH_SP}
+                />
+              )}
+              {playheadLine && playheadLine.pageIndex === page.index && (
+                <line
+                  className="playhead"
+                  x1={playheadLine.x}
+                  y1={playheadLine.y1}
+                  x2={playheadLine.x}
+                  y2={playheadLine.y2}
+                  stroke={PLAYHEAD_COLOR}
+                  strokeOpacity={PLAYHEAD_OPACITY}
+                  strokeWidth={PLAYHEAD_WIDTH_SP}
                 />
               )}
               {pitchDrag && pitchDrag.pageIndex === page.index && (

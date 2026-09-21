@@ -46,6 +46,7 @@ import {
   tempoFromText,
 } from "./interpret";
 import { buildTempoPoints, type TempoDirective } from "./tempo";
+import { TempoClock } from "./tempo-clock";
 import { unfoldMeasures } from "./unfold";
 
 /** Ticks per quarter note. Divisible by 3, 5 and 2^6, so common tuplets and 64ths are exact. */
@@ -769,14 +770,5 @@ function ornamentSegments(
 
 /** Ticks -> seconds through the tempo map (for players and duration readouts). */
 export function ticksToSeconds(timeline: Pick<Timeline, "ppq" | "tempos">, tick: number): number {
-  let seconds = 0;
-  let prevTick = 0;
-  let us = timeline.tempos[0]?.usPerQuarter ?? 500000;
-  for (const t of timeline.tempos) {
-    if (t.tick >= tick) break;
-    seconds += ((t.tick - prevTick) * us) / timeline.ppq / 1e6;
-    prevTick = t.tick;
-    us = t.usPerQuarter;
-  }
-  return seconds + ((tick - prevTick) * us) / timeline.ppq / 1e6;
+  return new TempoClock(timeline).tickToSeconds(tick);
 }

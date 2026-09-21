@@ -3,23 +3,12 @@
  * scores. Callers hand it tracks of already-timed raw events.
  */
 
-/** One encoded event at an absolute tick. `order` breaks ties between events at the same tick (lower first). */
+/** One encoded event at an absolute tick. `order` (see playback/messages.ts) breaks ties between events at the same tick, lower first. */
 export interface RawEvent {
   tick: number;
   order: number;
   bytes: number[];
 }
-
-/** Tie-break order for events sharing a tick: a note must end before the same key is struck again, etc. */
-export const ORDER = {
-  meta: 0,
-  setup: 1,
-  noteOff: 2,
-  pedalUp: 3,
-  pedalDown: 4,
-  lyric: 5,
-  noteOn: 6,
-} as const;
 
 /** MIDI variable-length quantity. */
 export function varLen(value: number): number[] {
@@ -71,15 +60,6 @@ export function timeSignatureEvent(numerator: number, denominator: number): numb
 export function keySignatureEvent(fifths: number, mode: "major" | "minor"): number[] {
   return metaEvent(META.keySignature, [fifths & 0xff, mode === "minor" ? 1 : 0]);
 }
-
-export const noteOn = (channel: number, pitch: number, velocity: number): number[] => [0x90 | channel, pitch, velocity];
-export const noteOff = (channel: number, pitch: number): number[] => [0x80 | channel, pitch, 0];
-export const controlChange = (channel: number, controller: number, value: number): number[] => [
-  0xb0 | channel,
-  controller,
-  value,
-];
-export const programChange = (channel: number, program: number): number[] => [0xc0 | channel, program];
 
 function encodeTrack(events: readonly RawEvent[], endTick: number): number[] {
   const sorted = events

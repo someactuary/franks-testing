@@ -595,3 +595,22 @@ score canvas is custom SVG either way).
   Carry-overs: glissando, two-note tremolo, half pedal and D.C./D.S./coda aren't
   modeled; Frank's "Be Still, My Soul" has no tempo mark at the start (only an OCR'd
   "Rubato"), so it exports at the 120 default until a Tempo mark is added.
+- 2026-09-20 (feature: playback through a MIDI device — second half of the playback
+  milestone). Frank chose to send playback to his digital piano over Web MIDI (over
+  in-browser piano samples). Added a tested look-ahead `Player` (src/playback/player.ts,
+  against an injected sink/clock), a shared message/ordering module used by both the file
+  writer and the player, a two-way tempo clock, tick<->score-position mapping, MIDI output
+  support (`MidiInputs` renamed `MidiPorts`, gaining outputs + timestamped send), a
+  `useMidiPorts` hook (port state moved out of App.tsx), a `usePlayback` hook, Play/Pause/
+  Stop toolbar controls with Space/Esc, a speed select, In/Out device selects, and an orange
+  playhead line that the view follows. Design points: stop sends silence twice (Web MIDI
+  can't reliably recall scheduled messages); only notes and sustain are sent (no program/
+  volume/pan) so the piano keeps its own sound; defaults the output to the device whose
+  name matches the input. 1037 tests (18 new). Verified end to end in the real app with a
+  fake MIDI piano injected into the page. Also: toolbar now wraps instead of overflowing.
+  Carry-overs: NOT tried with the real piano yet — check channel 1 response and sustain-
+  pedal handling; playback follows repeats but a playhead over a repeated section just
+  jumps back; no loop, no per-hand mute, no click track; editing during playback doesn't
+  change what's playing (the timeline is a snapshot from Play); in-browser samples remain
+  the fallback if MIDI-out proves awkward.
+

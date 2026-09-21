@@ -1,9 +1,10 @@
 /**
  * Thin wrapper around the Web MIDI API (`navigator.requestMIDIAccess`). See
- * docs/ARCHITECTURE.md "M3 contracts > MIDI input". Owns: permission request,
- * the list of visible input ports, which one is selected, per-input held-note
- * tracking (for chord building), and parsing raw MIDI bytes into `MidiNoteOn`
- * events (src/input/types.ts).
+ * docs/ARCHITECTURE.md "M3 contracts > MIDI input" and "Playback timeline and MIDI
+ * export". Owns: permission request, the lists of visible input and output ports,
+ * which of each is selected, per-input held-note tracking (for chord building),
+ * parsing raw MIDI bytes into `MidiNoteOn` events (src/input/types.ts), and sending
+ * timestamped messages to the selected output (the playback player's sink).
  *
  * Every entry point is guarded for browsers without Web MIDI (Safari and most
  * non-Chromium browsers): `isSupported()` reports false instead of throwing,
@@ -19,12 +20,18 @@ export interface MidiInputInfo {
   name: string;
 }
 
+export interface MidiOutputInfo {
+  id: string;
+  name: string;
+}
+
 type StateChangeListener = () => void;
 type NoteOnListener = (ev: MidiNoteOn) => void;
 
-export class MidiInputs {
+export class MidiPorts {
   private access: MIDIAccess | null = null;
   private boundInput: MIDIInput | null = null;
+  private boundOutput: MIDIOutput | null = null;
   private readonly held = new Set<number>();
   private readonly stateListeners = new Set<StateChangeListener>();
   private readonly noteOnListeners = new Set<NoteOnListener>();
@@ -66,7 +73,42 @@ export class MidiInputs {
     };
   }
 
-  /** Fires on any port connect/disconnect (hot-plug), so the UI can refresh its input list. */
+  /** Currently visible output ports (a digital piano usually shows up as both an input and an output). Empty until `request()` resolves. */
+  outputs(): MidiOutputInfo[] {
+    if (!this.access) return [];
+    return Array.from(this.access.outputs.values()).map((output) => ({ id: output.id, name: output.name ?? output.id }));
+  }
+
+  /** Selects the output that playback is sent to (or `null` for none). */
+  selectOutput(id: string | null): void {
+    this.boundOutput = id !== null && this.access ? (this.access.outputs.get(id) ?? null) : null;
+  }
+
+  /** Whether an output is selected and still connected. */
+  hasOutput(): boolean {
+    return this.boundOutput !== null && this.boundOutput.state !== "disconnected";
+  }
+
+  /** The clock `send`'s timestamps are on (Web MIDI uses the page's `performance.now()`). */
+  now(): number {
+    return performance.now();
+  }
+
+  /**
+   * Sends raw MIDI bytes to the selected output, to fire at `atMs` on the `now()` clock (at
+   * once if that time has passed). Silently does nothing without a connected output: a
+   * device unplugged mid-playback shouldn't throw into the player's timer.
+   */
+  send(bytes: number[], atMs: number): void {
+    if (!this.hasOutput()) return;
+    try {
+      this.boundOutput!.send(bytes, atMs);
+    } catch {
+      // Port vanished between the check and the send.
+    }
+  }
+
+  /** Fires on any port connect/disconnect (hot-plug), so the UI can refresh its port lists. */
   onStateChange(cb: StateChangeListener): () => void {
     this.stateListeners.add(cb);
     return () => this.stateListeners.delete(cb);

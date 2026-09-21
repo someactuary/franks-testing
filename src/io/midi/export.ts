@@ -5,15 +5,11 @@
  * one track per staff, all of a part's staves sharing one channel so its pedal is one pedal.
  */
 import { buildTimeline, type PlaybackOptions, type Timeline } from "@/playback/timeline";
+import { controlChange, ORDER, programChange, trackMessages } from "@/playback/messages";
 import type { Score } from "@/model/score";
 import {
-  controlChange,
   keySignatureEvent,
   META,
-  noteOff,
-  noteOn,
-  ORDER,
-  programChange,
   tempoEvent,
   textEvent,
   timeSignatureEvent,
@@ -48,17 +44,7 @@ export function timelineToMidi(tl: Timeline): Uint8Array<ArrayBuffer> {
       { tick: 0, order: ORDER.setup, bytes: controlChange(ch, CC_VOLUME, 100) },
       { tick: 0, order: ORDER.setup, bytes: controlChange(ch, CC_PAN, 64) },
     ];
-    for (const n of track.notes) {
-      events.push({ tick: n.onTick, order: ORDER.noteOn, bytes: noteOn(ch, n.pitch, n.velocity) });
-      events.push({ tick: n.offTick, order: ORDER.noteOff, bytes: noteOff(ch, n.pitch) });
-    }
-    for (const c of track.controllers) {
-      events.push({
-        tick: c.tick,
-        order: c.controller === 64 && c.value === 0 ? ORDER.pedalUp : ORDER.pedalDown,
-        bytes: controlChange(ch, c.controller, c.value),
-      });
-    }
+    events.push(...trackMessages(track));
     for (const l of track.lyrics) events.push({ tick: l.tick, order: ORDER.lyric, bytes: textEvent(META.lyric, l.text) });
     tracks.push(events);
   }

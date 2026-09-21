@@ -116,3 +116,30 @@ export function PrintIcon() {
     </IconBase>
   );
 }
+
+/** A right-pointing triangle: Play. */
+export function PlayIcon() {
+  return (
+    <IconBase>
+      <path d="M4.5 2.5v11l9-5.5Z" fill="currentColor" />
+    </IconBase>
+  );
+}
+
+/** Two bars: Pause. */
+export function PauseIcon() {
+  return (
+    <IconBase>
+      <path d="M4.5 2.5h2.5v11H4.5ZM9 2.5h2.5v11H9Z" fill="currentColor" />
+    </IconBase>
+  );
+}
+
+/** A square: Stop. */
+export function StopIcon() {
+  return (
+    <IconBase>
+      <path d="M3.5 3.5h9v9h-9Z" fill="currentColor" />
+    </IconBase>
+  );
+}
