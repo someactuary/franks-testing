@@ -10,6 +10,7 @@ import type { Score } from "@/model";
 import { allEvents, findEvent } from "@/model/traverse";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { importMusicXml, exportMusicXml, MusicXmlError } from "@/io/musicxml";
+import { exportMidi } from "@/io/midi/export";
 import type { OmrReviewItem } from "@/io/omr-cleanup";
 import { frac } from "@/model/duration";
 import { DEFAULT_ENTRY_STATE } from "@/input/types";
@@ -143,7 +144,7 @@ function writeStoredFilename(name: string | null): void {
 }
 
 /** Triggers a browser download of `content` as `filename`. */
-function downloadFile(filename: string, content: string, mimeType: string): void {
+function downloadFile(filename: string, content: BlobPart, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -231,6 +232,7 @@ export function App() {
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [midiMenuOpen, setMidiMenuOpen] = useState(false);
   const [stavesOpen, setStavesOpen] = useState(false);
   // The name last opened/saved as, remembered across reloads (localStorage) so "Save"
   // reuses it instead of re-deriving one from the title every time; "Save As" always
@@ -364,6 +366,22 @@ export function App() {
     return `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }`;
   }, [layout]);
 
+  // The Export MIDI menu closes on Escape or a click anywhere outside it.
+  useEffect(() => {
+    if (!midiMenuOpen) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && (e.target as HTMLElement | null)?.closest(".export-midi")) return;
+      setMidiMenuOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    window.addEventListener("mousedown", close);
+    return () => {
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("mousedown", close);
+    };
+  }, [midiMenuOpen]);
+
   // The browser tab is the customary place a document's filename shows up alongside
   // the app name (Word, Google Docs, etc.).
   useEffect(() => {
@@ -475,10 +493,25 @@ export function App() {
     setFileName(name);
   }
 
+  /** The remembered document name with `ext` swapped in, else one derived from the title. */
+  function exportFilename(ext: string): string {
+    return fileName ? withExtension(fileName, ext) : `${editor.score.meta.title || "score"}.${ext}`;
+  }
+
+  function handleExportMidi(interpretation: "expressive" | "literal") {
+    setMidiMenuOpen(false);
+    try {
+      downloadFile(exportFilename("mid"), exportMidi(editor.score, { interpretation }), "audio/midi");
+      setIoMessage(null);
+    } catch (err) {
+      setIoMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function handleExportMusicXml() {
     try {
       const text = exportMusicXml(editor.score);
-      downloadFile(`${editor.score.meta.title || "score"}.musicxml`, text, "application/vnd.recordare.musicxml+xml");
+      downloadFile(exportFilename("musicxml"), text, "application/vnd.recordare.musicxml+xml");
       setIoMessage(null);
     } catch (err) {
       if (err instanceof MusicXmlError) setIoMessage(err.message);
@@ -682,6 +715,28 @@ export function App() {
           <button type="button" onClick={handleExportMusicXml}>
             Export MusicXML
           </button>
+          <div className="export-midi">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={midiMenuOpen}
+              onClick={() => setMidiMenuOpen((v) => !v)}
+            >
+              Export MIDI ▾
+            </button>
+            {midiMenuOpen && (
+              <div className="export-midi-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => handleExportMidi("expressive")}>
+                  <strong>Performance</strong>
+                  <span>Articulations, ornaments, arpeggios, fermatas and ritardandos played out — for listening.</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => handleExportMidi("literal")}>
+                  <strong>Notation-exact</strong>
+                  <span>Every note exactly as written — for carrying into another notation program.</span>
+                </button>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setCompareOpen((v) => !v)}

@@ -79,6 +79,46 @@ body {
   gap: 0.35rem;
 }
 
+.export-midi {
+  position: relative;
+}
+
+.export-midi-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 300px;
+  padding: 6px;
+  background: #24262b;
+  border: 1px solid #666;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+.export-midi-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+
+.export-midi-menu button:hover {
+  background: #3a3d44;
+}
+
+.export-midi-menu span {
+  font-size: 0.78rem;
+  color: #aaa;
+  line-height: 1.3;
+}
+
 /* Every button that couldn't get a clear icon lives here, pushed to the toolbar's far
  * right edge (along with whatever comes after it — MIDI, Shortcuts, Score Info) so the
  * icon buttons stay a tight cluster next to the document name. */

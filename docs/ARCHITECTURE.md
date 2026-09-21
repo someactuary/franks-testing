@@ -23,7 +23,9 @@ Score (src/model)  --engrave-->  LayoutResult (src/engraving)  --render-->  SVG 
 - `src/io` — `.pscore` JSON (zod-validated, versioned, migrations), MusicXML, MIDI.
 - `src/input` — keyboard step entry, MIDI input, mouse hit-testing → commands.
 - `src/ui` — React shell: score view, palettes, inspector.
-- `src/playback` — model → tempo map/sequence → Web Audio / Web MIDI.
+- `src/playback` — `buildTimeline(score)`: repeats, tie merging, tempo map, velocity,
+  pedal → plain tick-based data. Consumed by `src/io/midi` (file export) and, later, by
+  any in-app player (Web Audio / Web MIDI). See "Playback timeline and MIDI export".
 
 ## Invariants
 
@@ -543,3 +545,79 @@ since the icons are only 16px) rather than just reading the SVG path data — th
 what caught that the plain-triangle Undo/Redo icons from the first pass, while
 technically fine, were worth replacing with something more recognizable once actually
 compared side by side with a real curved-arrow rendering.
+
+## Playback timeline and MIDI export (2026-09-20)
+
+Frank asked for MIDI export "with high fidelity to the score", then to work out playback
+options. The design goal was one place that decides *how the score sounds*, so a file
+export and any future in-app player can never disagree.
+
+**`src/playback/timeline.ts` — `buildTimeline(score, options): Timeline`.** Pure
+(score in, plain data out; the score is untouched). Output: per-staff tracks of notes
+(MIDI pitch, velocity, on/off **ticks**), sustain-pedal controllers, lyrics, plus a
+score-wide tempo map, time/key signatures, rehearsal marks, and `playedMeasures` (which
+score measure each stretch of ticks came from — what a playhead will need). PPQ is 960,
+divisible by 3, 5 and 2^6, so triplets, quintuplets and 64ths are exact. Musical time is
+`Fraction`s of a whole note throughout (invariant 1) until the final step, where every
+boundary is rounded once with the same function — so a tied note's end and the next
+note's start always land on the same tick, and a septuplet's seven notes tile their beat
+with no gap or overlap (tested). Ticks exist only in this layer, as PLAN.md intended.
+
+What it follows: repeat signs and 1st/2nd endings (`unfold.ts`; D.C./D.S./coda have no
+model representation so aren't followed); ties (merged into one sustained note, pairing
+reused from the engraver's `resolveTies` so playback and the drawn ties can't disagree,
+and only merged when the two notes are contiguous in *played* time so a repeat jump
+correctly re-strikes); tuplets; pickup measures; time/key signature changes; ottava
+(sounding pitch = written pitch + shift; written pitches are what's stored, per the
+MusicXML importer); dynamics and hairpins as note-on velocity (`dynamics.ts`; a
+dynamic applies to the whole part, since piano dynamics sit between the staves; a
+hairpin ramps toward the marking written at its end, else moves a fixed step); accents/
+sforzando/marcato as attack velocity; sustain pedal from pedal spanners and Ped./* marks
+(one pedal per *part*, so all its staves share one MIDI channel; releases sort before
+presses on a tick so a pedal change stays a change, and a depth count stops overlapping
+marks releasing early); grace notes (acciaccatura before the beat, appoggiatura out of
+the principal note); lyrics (first verse) as MIDI lyric events; slurs as legato. Tempo
+comes from metronome marks (any beat unit), tempo words ("Andante", …), and metronome
+marks that arrived as plain text — including OCR-garbled ones like "J=110", since
+Frank's scanned scores produce them. A first tempo mark only sets the music *before*
+it if it's within two measures of the start; one deep in the piece says nothing about
+how it began, so the default (120) applies instead.
+
+**Two interpretations** (`PlaybackOptions.interpretation`). *expressive* (default):
+articulations shorten notes (staccato is capped in absolute length, so a staccato half
+note is short rather than a quarter long), non-slurred notes lift a 64th early, and
+ornaments (trill/mordent/turn, neighbours taken from the key signature), tremolo and
+arpeggios are played out, fermatas hold ×2 by slowing the *tempo* over the anchored
+event (so every staff stretches together and note ticks stay notated), and
+rit./accel./a tempo become tempo ramps. *literal*: every note sounds exactly its notated
+length with explicit tempo marks only — the right export for carrying notation into
+another notation program, where realised ornaments would just be noise to re-quantize.
+
+One model fact worth remembering: a spanner's **end anchor on an event means the end of
+that event** (the importer picks "the event that ends where the stop mark sits";
+the engraver draws to it), so an 8va or pedal ending on a note includes it — but a
+slur's end uses that note's *attack*, or the last note would be joined to whatever follows.
+
+**`src/io/midi/` — the file.** `smf.ts` is a byte-level Standard MIDI File writer;
+`export.ts` lays a `Timeline` out as format 1: a conductor track (title, composer,
+copyright, tempo map, time/key signatures, rehearsal markers) then one track per staff.
+Events sharing a tick are ordered so a note ends before the same key restrikes, a pedal
+release precedes a press, and both come before that tick's note-ons. UI: "Export MIDI ▾"
+in the toolbar's text group, a two-item menu (Performance / Notation-exact) that names the
+file after the current document.
+
+**How it was verified** — with tools other than the code that wrote it: `test/io/smf-reader.ts`
+is an independent SMF parser used by the tests (all 15 fixture scores, both modes: valid,
+positive-length notes, no same-key overlap, pedal never left down, and every written note
+sounds exactly once with ties merged); the real files were also read by Python's `mido`
+(same note counts and length as the timeline) and by **Apple's own `AVAudioSequencer`**,
+which loaded them (sequence length exactly matching) and rendered audio offline through
+macOS's built-in sound bank. That last step also answered a playback question: macOS can
+render a MIDI file to audio with no third-party software — `afconvert` cannot (it doesn't
+read MIDI), but a small Swift program over `AVAudioEngine` manual rendering can, about
+180x faster than real time.
+
+Not modeled: glissando spans, two-note (fingered) tremolo, half pedal, D.C./D.S./coda,
+text-only crescendo/diminuendo without a hairpin. Interpretation numbers (velocities for
+each dynamic, articulation lengths, ramp depths) are conventional ones from notation
+software, kept together in `interpret.ts` to retune by ear.

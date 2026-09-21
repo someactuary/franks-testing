@@ -572,3 +572,26 @@ score canvas is custom SVG either way).
   this is what actually confirmed the curved arrows read correctly and the clef/
   PDF icons are legible at 16px. 880 tests still passing (no new command logic
   this round, UI-only), lint/typecheck/build clean.
+- 2026-09-20 (feature: MIDI export + playback timeline; first half of the playback
+  milestone). Frank asked for MIDI export "with high fidelity to the score", then to
+  figure out playback options. Built a pure `buildTimeline(score, options)`
+  (src/playback/) that decides everything about how the score sounds — repeats/endings,
+  tie merging, tuplets, tempo map (marks, words, OCR-garbled text marks, rit./accel./a
+  tempo, fermata holds), dynamics and hairpins as velocity, articulations, slurs,
+  pedal, ottava, grace notes, ornaments, tremolo, arpeggios, lyrics — and a Standard
+  MIDI File writer (src/io/midi/) that just lays the timeline out as a format-1 file.
+  Two interpretations: "expressive" (for listening) and "literal" (notated lengths
+  only, for carrying notation into another notation program), chosen from an "Export
+  MIDI" menu in the toolbar. 1019 tests (139 new). Verified beyond the unit tests with
+  tools other than my own code: an independent SMF parser in the tests over all 15
+  fixtures in both modes; Python `mido` over both of Frank's real scores (same note
+  counts and length); and Apple's own AVAudioSequencer, which loaded and rendered them
+  offline through macOS's built-in sound bank. Found and fixed along the way: 15ma/15mb
+  ottava sounded 23 semitones instead of 24 (caught by a test); a first tempo mark deep
+  in a piece was being applied backwards to how the piece began (now only within two
+  measures of the start); OCR-garbled metronome marks in Frank's scanned score ("J=110")
+  were being ignored. Playback options evaluated but not yet built — see the entry
+  below.
+  Carry-overs: glissando, two-note tremolo, half pedal and D.C./D.S./coda aren't
+  modeled; Frank's "Be Still, My Soul" has no tempo mark at the start (only an OCR'd
+  "Rubato"), so it exports at the 120 default until a Tempo mark is added.
