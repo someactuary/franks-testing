@@ -72,6 +72,8 @@ export interface Ref {
     | "accidental"
     | "dot"
     | "clef"
+    /** A clef change inside the music (id from `clefChangeId`); selectable and deletable. */
+    | "clefChange"
     | "keysig"
     | "timesig"
     | "barline"

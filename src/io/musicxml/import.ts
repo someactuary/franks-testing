@@ -917,6 +917,36 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
     };
   });
 
+  // --- clef changes ---
+  // A clef printed just before a barline belongs to the next measure: MusicXML (and
+  // Audiveris especially) often writes it at the very end of the measure before, and OMR
+  // sometimes places one past the end when it misreads a rhythm. Both move to offset 0 of
+  // the next measure, unless that measure states its own opening clef. `${staff}/${measure}`.
+  const clefChangesAt = new Map<string, { at: Fraction; clef: ClefKind }[]>();
+  const pushClef = (si: number, mi: number, change: { at: Fraction; clef: ClefKind }) => {
+    const key = `${si}/${mi}`;
+    const list = clefChangesAt.get(key) ?? [];
+    list.push(change);
+    clefChangesAt.set(key, list);
+  };
+  const carried: { si: number; mi: number; clef: ClefKind }[] = [];
+  for (let mi = 0; mi < measureCount; mi++) {
+    const target = measureLengths[mi] ?? measureLength(timeSig);
+    for (const [si, ref] of staffRefs.entries()) {
+      for (const c of rawParts[ref.partIndex]!.measures[mi]?.clefs ?? []) {
+        if (staffIndexOf(ref.partIndex, c.staff) !== si) continue;
+        if (mi === 0 && cmp(c.at, ZERO) === 0) continue; // the staff's initial clef
+        if (cmp(c.at, target) >= 0) carried.push({ si, mi: mi + 1, clef: c.clef });
+        else pushClef(si, mi, { at: c.at, clef: c.clef });
+      }
+    }
+  }
+  for (const c of carried) {
+    if (c.mi >= measureCount) continue; // after the final barline: nothing left to apply to
+    const own = clefChangesAt.get(`${c.si}/${c.mi}`) ?? [];
+    if (!own.some((o) => cmp(o.at, ZERO) === 0)) pushClef(c.si, c.mi, { at: ZERO, clef: c.clef });
+  }
+
   // --- measure content ---
   const builtEvents = new Map<string, BuiltEvent[]>(); // `${staffIndex}/${measureIndex}`
   const partMeasures: PartMeasure[] = [];
@@ -927,10 +957,7 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
       const events = (rm?.events ?? []).filter(
         (e) => staffIndexOf(ref.partIndex, e.staff) === si,
       );
-      const clefChanges = (rm?.clefs ?? [])
-        .filter((c) => staffIndexOf(ref.partIndex, c.staff) === si)
-        .filter((c) => !(mi === 0 && cmp(c.at, ZERO) === 0))
-        .map((c) => ({ at: c.at, clef: c.clef }));
+      const clefChanges = [...(clefChangesAt.get(`${si}/${mi}`) ?? [])].sort((a, b) => cmp(a.at, b.at));
       const order = voiceOrder.get(si) ?? [];
       const voiceKeys = order.filter((v) => events.some((e) => e.voice === v));
       const usedKeys = voiceKeys.length > 0 ? voiceKeys : [order[0] ?? "1"];

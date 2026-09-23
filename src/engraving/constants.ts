@@ -20,6 +20,10 @@ export const ENGRAVING = {
   prefixLeadSp: 0.4,
   /** Gap after the clef. */
   clefGapSp: 0.9,
+  /** A clef change inside the music is drawn smaller than a system's opening clef (Gould: about two thirds). */
+  clefChangeScale: 0.7,
+  /** Gap between a clef change and the notes after it (or the barline, for one before a barline). */
+  clefChangeGapSp: 0.5,
   /** Gap between successive key-signature accidentals. */
   keyAccidentalGapSp: 0.12,
   /** Gap between the cancellation naturals and the incoming key signature. */

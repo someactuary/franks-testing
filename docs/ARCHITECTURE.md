@@ -303,6 +303,56 @@ titles from OCR are lost) and often writes no time signature (the importer then 
   signatures and small cue-size staves; on a photo cropped through the clefs it guesses
   the clefs (wrong pitches for that system), as Audiveris does.
 
+## Clef changes (2026-09-22)
+
+Piano music often moves a hand between treble and bass mid-piece. The model always
+stored this (`StaffMeasure.clefChanges`, `{ at, clef }` at any measure-relative offset),
+and MusicXML import/export and `.pscore` kept it, but the engraver only honored a change
+at a measure's very start, and even then drew no clef mid-system. A change later in the
+measure was ignored: the notes after it were placed by the old clef (bass notes hanging
+on ledger lines below a treble staff), though playback was right. Found on an
+Audiveris import of a piano piece whose left hand switches clef mid-measure.
+
+- **Model** (`src/model/clefs.ts`): `clefAt(score, part, staff, measure, offset)` is the
+  one answer to "which clef is in force here" (a change applies from its own offset on,
+  including an event starting exactly there); `clefEnteringMeasure`, `clefInMeasureAt`.
+  Clef changes have no id in the model, so `clefChangeId({measureId, partIndex,
+  staffIndex, at})` encodes a stable one (`clefchange|<measureId>|p|s|n/d`) for
+  selection, and `parseClefChangeId` reads it back.
+- **Engraving**: `planClefs` (engrave.ts) walks every staff's changes once, giving each
+  measure its opening clef, its mid-measure `clefMarks`, its closing clef, and a
+  `trailingClef` (the next measure's offset-0 change). A change that restates the clef
+  in force draws nothing. `layoutStaffMeasure` places each event by the clef at its own
+  offset (noteheads, ledger lines, stems, beams, accidental positions).
+  - A mid-measure change is drawn at `ENGRAVING.clefChangeScale` (0.7) in front of the
+    first column at or after its offset; `reserveClefLeads` (spacing.ts) widens that
+    column's `left` by the clef plus `clefChangeGapSp`, so it pushes the notes rather
+    than overlapping them.
+  - A change at a measure's start is drawn small before the PREVIOUS measure's barline
+    (the measure's new `tail` width), the standard placement; when that measure ends a
+    system, the same glyph is the courtesy clef, and the new system's prefix shows the
+    new clef at full size.
+  - Glyphs carry `ref: { id: clefChangeId, role: "clefChange" }`; the role is in
+    `SELECTABLE_ROLES`.
+- **Import**: a clef MusicXML places at or past a measure's end (Audiveris writes one at
+  the end of the measure before; a misread rhythm can put one past the end) moves to
+  offset 0 of the next measure, unless that measure states its own opening clef; one after
+  the final barline is dropped. The past-the-end case always comes with a broken-rhythm
+  measure that cleanup already flags for review.
+- **Editing**: a "Clef" palette group with Treble and Bass buttons (`{ kind:
+  "clefChange", clef }`) applies `setClefChange` (commands/clefs.ts) at the earliest
+  selected note, or at the cursor (offset 0 = from the start of that measure). It
+  replaces a change at the same point, removes one that would restate the clef already in
+  force, and at the very start of the piece sets the staff's opening clef. Clicking a
+  drawn clef change selects it; Delete runs `removeClefChange(id)`. The status bar shows
+  the clef at the cursor. The Staves panel still sets a staff's opening clef for the
+  whole piece. No keyboard shortcut (Frank's call).
+- Verified on Tifa's Theme: with homr's reading, every clef change on the page (bass
+  before the last eighth of m3, courtesy treble at the end of system 1, bass before the
+  E♭ in m6) is drawn where the original has it. Audiveris's reading has one spurious
+  bass clef in m1 (its misread, flagged for review with the rest of that measure).
+  Editor round trip (add, select, Delete, Undo) checked in headless Chromium.
+
 ## Manual layout control (2026-09-15)
 
 Requested by Frank after PDF import left a real file with a sparse last page (a
@@ -524,8 +574,8 @@ silently discard that choice, and it means a note that's *already* wrong (like F
 originally-reported one) needs one `toggleStemDirection` to re-anchor it before this
 starts tracking it automatically. Convention itself now accounts for multi-voice
 staves too (`voiceStemDirection` instead of pitch, when the staff carries more than one
-voice) and mid-score clef changes (walks `clefAtMeasureStart`, exported from
-`engrave.ts` for this) — beaming is the one thing deliberately left out, same
+voice) and clef changes (the clef at the note's own offset, via the model's `clefAt`;
+see "Clef changes") — beaming is the one thing deliberately left out, same
 one-note-at-a-time caveat as the manual flip above. `transposeNotes` captures one
 baseline per *event* before any of its notes' pitches change (a chord can have more
 than one note in the same transpose call) and reconciles once per event after, so

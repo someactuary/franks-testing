@@ -643,3 +643,18 @@ score canvas is custom SVG either way).
   homr writes no time signature for many pieces (import assumes 4/4); no automatic engine
   choice (photos → homr) yet; Audiveris's own log warnings (missing clefs, no time
   signature) still aren't shown in the review panel.
+- 2026-09-22 (feature: clef changes). Frank: "how should we handle staff changes, e.g.
+  from Treble to Bass? This is common in piano." The model/import/export already stored
+  clef changes anywhere in a measure, but the engraver only honored one at a measure's
+  start and never drew it mid-system, so a mid-measure change left the notes after it
+  placed by the old clef. Now: notes are placed by the clef at their own offset
+  (`clefAt`, src/model/clefs.ts); mid-measure changes are drawn small in front of the
+  notes they apply to with room reserved; start-of-measure changes are drawn small
+  before the previous barline (the courtesy clef at a system end); import moves a clef
+  at/past a measure's end to the next measure; a Clef palette group (Treble, Bass) adds a
+  change at the selected note or cursor; a clef change is selectable and Delete removes
+  it; stem direction and the status bar use the clef at the note. 1119 tests (29 new).
+  Verified on Tifa's Theme (homr's reading matches every clef change on the page) and in
+  headless Chromium. Carry-overs: only Treble and Bass buttons (alto/tenor and octave
+  clefs only via import or the Staves panel's opening clef); a clef change can't be
+  dragged; a change on a cross-staff note uses the host staff.

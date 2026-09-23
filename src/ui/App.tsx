@@ -6,7 +6,7 @@ import { engrave } from "@/engraving";
 import type { Ref } from "@/engraving/layout-types";
 import { newPianoScore } from "@/model/factory";
 import type { NoteValue, TimeSignature } from "@/model/duration";
-import type { Score } from "@/model";
+import { clefAt, type Score } from "@/model";
 import { allEvents, findEvent } from "@/model/traverse";
 import { parseScore, serializeScore } from "@/io/pscore";
 import { importMusicXml, exportMusicXml, MusicXmlError } from "@/io/musicxml";
@@ -611,7 +611,10 @@ export function App() {
 
   const cursor = editor.cursor;
   const currentStaffDef = editor.score.parts[cursor.partIndex]?.staves[cursor.staffIndex];
-  const clef = currentStaffDef ? clefLabel(currentStaffDef.initialClef) : "?";
+  // The clef at the cursor itself, so a clef change earlier in the piece shows here.
+  const clef = currentStaffDef
+    ? clefLabel(clefAt(editor.score, cursor.partIndex, cursor.staffIndex, cursor.measureIndex, cursor.offset))
+    : "?";
   const durationName = DURATION_NAMES[editor.entry.base] ?? String(editor.entry.base);
   const dots = ".".repeat(editor.entry.dots);
   const statusMessage = ioMessage ?? editor.message;

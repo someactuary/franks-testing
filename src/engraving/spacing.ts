@@ -26,7 +26,7 @@ import {
   stepToY,
   timeSigDigitGlyphs,
 } from "./geometry";
-import type { StaffMeasureLayout } from "./semantic";
+import type { ClefMark, StaffMeasureLayout } from "./semantic";
 
 // ---------------------------------------------------------------------------
 // Prefix (clef / key / time)
@@ -195,8 +195,34 @@ export interface SpacingColumn {
    * the column after it to the right rather than collide with its neighbour.
    */
   lyricWidth: number;
+  /**
+   * Room reserved at the left of `left` for a clef change drawn before this column
+   * (0 when none). Included in `left`; the clef sits at `x - left`.
+   */
+  clefLead: number;
   /** Measure-local x, filled in by `assignMeasureColumns`. */
   x: number;
+}
+
+/** Width of a clef change glyph (drawn at `ENGRAVING.clefChangeScale`). */
+export function clefChangeWidth(font: SmuflFontData, clef: ClefKind): number {
+  return glyphBox(font, clefGlyph(clef)).width * ENGRAVING.clefChangeScale;
+}
+
+/**
+ * The column a mid-measure clef change is drawn in front of: the first column at or after
+ * its offset. Undefined when nothing starts at or after it; it is then drawn before the barline.
+ */
+export function columnForClefMark(columns: readonly { offset: Fraction }[], mark: ClefMark): number | undefined {
+  const i = columns.findIndex((c) => cmp(c.offset, mark.offset) >= 0);
+  return i === -1 ? undefined : i;
+}
+
+/** Clef changes a staff draws just before this measure's barline: the next measure's opening change, and any mid-measure change with no column after it. */
+export function barlineClefMarks(staff: StaffMeasureLayout, columns: readonly { offset: Fraction }[]): ClefMark[] {
+  const out = staff.clefMarks.filter((m) => columnForClefMark(columns, m) === undefined);
+  if (staff.trailingClef) out.push(staff.trailingClef);
+  return out;
 }
 
 /**
@@ -233,6 +259,7 @@ export function buildColumns(staves: StaffMeasureLayout[]): SpacingColumn[] {
           left,
           right,
           lyricWidth,
+          clefLead: 0,
           x: 0,
         });
       } else {
@@ -246,6 +273,19 @@ export function buildColumns(staves: StaffMeasureLayout[]): SpacingColumn[] {
   const cols = [...byOffset.values()].sort((a, b) => cmp(a.offset, b.offset));
   for (const c of cols) c.ideal = idealColumnWidth(c.shortest);
   return cols;
+}
+
+/** Widens each column that a staff's clef change is drawn in front of. */
+function reserveClefLeads(font: SmuflFontData, staves: StaffMeasureLayout[], cols: SpacingColumn[]): void {
+  for (const staff of staves) {
+    for (const mark of staff.clefMarks) {
+      const i = columnForClefMark(cols, mark);
+      if (i === undefined) continue;
+      const col = cols[i]!;
+      col.clefLead = Math.max(col.clefLead, clefChangeWidth(font, mark.clef) + ENGRAVING.clefChangeGapSp);
+    }
+  }
+  for (const col of cols) col.left += col.clefLead;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,11 +321,13 @@ export interface MeasureSpacing {
   barlineWidth: number;
   /** Fixed width before the first column origin. */
   head: number;
+  /** Fixed width just before the barline for clef changes drawn there (0 when none). */
+  tail: number;
   /** Stretchable advances: `advances[i]` leads from column i to column i+1 (or to the barline). */
   advances: number[];
   /** Spring weight for each advance (the column's ideal width). */
   weights: number[];
-  /** head + sum(advances) + barlineWidth. */
+  /** head + sum(advances) + tail + barlineWidth. */
   naturalWidth: number;
   /** Final measure width, assigned by `justifySystem`. */
   width: number;
@@ -294,6 +336,7 @@ export interface MeasureSpacing {
 }
 
 export function buildMeasureSpacing(args: {
+  font: SmuflFontData;
   measureIndex: number;
   measureId: Id;
   prefix: MeasurePrefix;
@@ -304,7 +347,14 @@ export function buildMeasureSpacing(args: {
   extraLead?: number;
 }): MeasureSpacing {
   const columns = buildColumns(args.staves);
+  reserveClefLeads(args.font, args.staves, columns);
   const bw = barlineWidth(args.barline, args.defaults);
+  const tail = Math.max(
+    0,
+    ...args.staves.flatMap((staff) =>
+      barlineClefMarks(staff, columns).map((m) => clefChangeWidth(args.font, m.clef) + ENGRAVING.clefChangeGapSp),
+    ),
+  );
   const lead = ENGRAVING.measureLeadSp + (args.extraLead ?? 0);
 
   // A syllable is centred on its column, so half of it hangs off each side; the
@@ -329,7 +379,7 @@ export function buildMeasureSpacing(args: {
     weights.push(c.ideal);
   }
 
-  const naturalWidth = head + advances.reduce((a, b) => a + b, 0) + bw;
+  const naturalWidth = head + advances.reduce((a, b) => a + b, 0) + tail + bw;
   return {
     measureIndex: args.measureIndex,
     measureId: args.measureId,
@@ -339,6 +389,7 @@ export function buildMeasureSpacing(args: {
     barline: args.barline,
     barlineWidth: bw,
     head,
+    tail,
     advances,
     weights,
     naturalWidth,
@@ -369,7 +420,7 @@ export function justifySystem(measures: MeasureSpacing[], targetWidth: number): 
       m.columns[i]!.x = cx;
       cx += m.advances[i]! + perWeight * m.weights[i]!;
     }
-    m.width = cx + m.barlineWidth;
+    m.width = cx + m.tail + m.barlineWidth;
     // Absorb floating point drift in the last measure so the system closes exactly.
     if (perWeight > 0 && mi === measures.length - 1) m.width = targetWidth - x;
     x += m.width;

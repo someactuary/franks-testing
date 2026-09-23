@@ -9,15 +9,16 @@
  * M2 scope: several voices per staff, tuplets, staff groups and staff names.
  * Still missing: spanners, attachments, grace notes, cross-staff notes.
  */
-import { fracToString, measureLength as timeSigLength, type Fraction, type TimeSignature } from "@/model/duration";
+import { clefChangeId, sortedClefChanges } from "@/model/clefs";
+import { cmp, fracToString, measureLength as timeSigLength, ZERO, type Fraction, type TimeSignature } from "@/model/duration";
 import type { Id } from "@/model/ids";
 import type { KeySignature } from "@/model/pitch";
-import type { BarlineStyle, ClefKind, Part, Score, StaffGroupSymbol, StaffMeasure } from "@/model/score";
+import type { BarlineStyle, ClefKind, Part, Score, StaffGroupSymbol } from "@/model/score";
 import type { EngravingDefaults, SmuflFontData } from "@/render/smufl/types";
 import { emitAttachments } from "./attachments";
 import { planSystems, type SystemPlan } from "./breaking";
 import { ENGRAVING } from "./constants";
-import { glyphBox, pathBounds, STAFF_HEIGHT } from "./geometry";
+import { clefGlyph, clefGlyphStep, glyphBox, pathBounds, STAFF_HEIGHT, stepToY } from "./geometry";
 import { emitLyrics } from "./lyrics";
 import type {
   LayoutResult,
@@ -32,13 +33,16 @@ import {
   beamGeometry,
   layoutStaffMeasure,
   stemDirectionForSteps,
+  type ClefMark,
   type EventLayout,
   type StaffMeasureLayout,
 } from "./semantic";
 import { emitSpanners } from "./spanners";
 import { applyNudges } from "./nudges";
 import {
+  barlineClefMarks,
   buildMeasureSpacing,
+  columnForClefMark,
   justifySystem,
   layoutPrefix,
   type MeasurePrefix,
@@ -104,10 +108,53 @@ interface BuiltSystem extends SystemFrame {
   below: number;
 }
 
-export function clefAtMeasureStart(sm: StaffMeasure | undefined, running: ClefKind): ClefKind {
-  // M0 only honours clef changes at the very start of a measure.
-  const change = sm?.clefChanges?.find((c) => c.at.num === 0);
-  return change ? change.clef : running;
+/** Clefs of one staff in one measure: the opening clef, the changes after offset 0, and the clef it ends in. */
+interface StaffClefs {
+  start: ClefKind;
+  marks: ClefMark[];
+  end: ClefKind;
+  /** The next measure's opening change, drawn before this measure's barline. */
+  trailing?: ClefMark;
+}
+
+/**
+ * Walks every staff's clef changes once, in score order. A change that restates the
+ * clef already in force draws nothing; a change at offset 0 of measure m+1 is drawn
+ * small before measure m's barline (the standard placement, which doubles as the
+ * courtesy clef when m+1 starts a system) and at full size in m+1's system-start
+ * prefix. `[measureIndex][slotIndex]`.
+ */
+function planClefs(score: Score, slots: { partIndex: number; staffIndex: number }[]): StaffClefs[][] {
+  const plan: StaffClefs[][] = score.measures.map(() => []);
+  for (const [i, slot] of slots.entries()) {
+    const part = score.parts[slot.partIndex]!;
+    let running: ClefKind = part.staves[slot.staffIndex]?.initialClef ?? "treble";
+    for (const [mi, attrs] of score.measures.entries()) {
+      let start = running;
+      const marks: ClefMark[] = [];
+      for (const c of sortedClefChanges(part.measures[mi]?.staves[slot.staffIndex])) {
+        if (cmp(c.at, ZERO) <= 0) {
+          start = c.clef;
+          running = c.clef;
+          continue;
+        }
+        if (c.clef === running) continue;
+        const id = clefChangeId({ measureId: attrs.id, partIndex: slot.partIndex, staffIndex: slot.staffIndex, at: c.at });
+        marks.push({ offset: c.at, clef: c.clef, id });
+        running = c.clef;
+      }
+      plan[mi]![i] = { start, marks, end: running };
+      const prev = mi > 0 ? plan[mi - 1]![i]! : undefined;
+      if (prev && start !== prev.end) {
+        prev.trailing = {
+          offset: ZERO,
+          clef: start,
+          id: clefChangeId({ measureId: attrs.id, partIndex: slot.partIndex, staffIndex: slot.staffIndex, at: ZERO }),
+        };
+      }
+    }
+  }
+  return plan;
 }
 
 export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
@@ -122,7 +169,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
   const span = staffSpan(slots);
 
   // --- 1. semantic pass + spacing, measure by measure ----------------------
-  const clefs: ClefKind[][] = score.parts.map((p) => p.staves.map((s) => s.initialClef));
+  const clefPlan = planClefs(score, slots);
   let key: KeySignature = { fifths: 0, mode: "major" };
   let timeSig: TimeSignature = { numerator: 4, denominator: 4 };
   let measureNumber = 1;
@@ -140,18 +187,12 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
     if (attrs.numberOverride !== undefined) measureNumber = attrs.numberOverride;
     const measureLen: Fraction = attrs.actualLength ?? timeSigLength(timeSig);
 
-    for (const [pi, part] of score.parts.entries()) {
-      const pm = part.measures[mi];
-      for (const [si] of part.staves.entries()) {
-        clefs[pi]![si] = clefAtMeasureStart(pm?.staves[si], clefs[pi]![si]!);
-      }
-    }
-    const flatClefs = slots.map((s) => clefs[s.partIndex]![s.staffIndex]!);
+    const flatClefs = clefPlan[mi]!.map((c) => c.start);
 
     const staves: StaffMeasureLayout[] = slots.map((slot, i) => {
       const part = score.parts[slot.partIndex]!;
       const sm = part.measures[mi]?.staves[slot.staffIndex];
-      return layoutStaffMeasure({
+      const layout = layoutStaffMeasure({
         font,
         partIndex: slot.partIndex,
         staffIndex: slot.staffIndex,
@@ -161,7 +202,10 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
         measureLength: measureLen,
         voices: sm?.voices ?? [],
         tiedFrom: ties.targets,
+        clefMarks: clefPlan[mi]![i]!.marks,
       });
+      const trailing = clefPlan[mi]![i]!.trailing;
+      return trailing ? { ...layout, trailingClef: trailing } : layout;
     });
 
     // The clef and the key signature in force are repeated at every system start;
@@ -178,7 +222,7 @@ export function engrave(score: Score, opts: EngraveOptionsInput): LayoutResult {
       });
 
     const barline: BarlineStyle = attrs.barline ?? "regular";
-    const common = { measureIndex: mi, measureId: attrs.id, staves, barline, defaults };
+    const common = { font, measureIndex: mi, measureId: attrs.id, staves, barline, defaults };
     prepared.push({
       index: mi,
       id: attrs.id,
@@ -687,7 +731,42 @@ function emitMeasure(out: Primitive[], input: MeasureEmitInput): void {
     });
   }
 
+  emitClefChanges(out, { slots, spacing });
   emitBarlines(out, { defaults, slots, spacing, prepared });
+}
+
+/**
+ * Clef changes inside the music, drawn at `ENGRAVING.clefChangeScale`: each mid-measure
+ * change at the left edge of the room its column reserved (see spacing.ts
+ * `reserveClefLeads`), and changes that fall at the barline in the measure's tail.
+ */
+function emitClefChanges(
+  out: Primitive[],
+  input: { slots: StaffSlot[]; spacing: MeasureSpacing },
+): void {
+  const { slots, spacing } = input;
+  const scale = ENGRAVING.clefChangeScale;
+  for (const staff of spacing.staves) {
+    const sy = slots.find((s) => s.partIndex === staff.partIndex && s.staffIndex === staff.staffIndex)?.y ?? 0;
+    const draw = (mark: ClefMark, x: number) =>
+      out.push({
+        type: "glyph",
+        glyph: clefGlyph(mark.clef),
+        x,
+        // Scaled about its origin, the clef stays anchored on its own line.
+        y: sy + stepToY(0, clefGlyphStep(mark.clef)),
+        scale,
+        ref: { id: mark.id, role: "clefChange" },
+      });
+    for (const mark of staff.clefMarks) {
+      const ci = columnForClefMark(spacing.columns, mark);
+      if (ci === undefined) continue;
+      const col = spacing.columns[ci]!;
+      draw(mark, spacing.x + col.x - col.left);
+    }
+    const tailX = spacing.x + spacing.width - spacing.barlineWidth - spacing.tail;
+    for (const mark of barlineClefMarks(staff, spacing.columns)) draw(mark, tailX);
+  }
 }
 
 interface EventEmitInput {

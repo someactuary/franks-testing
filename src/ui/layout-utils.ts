@@ -279,6 +279,7 @@ export interface ElementHit {
  */
 const SELECTABLE_ROLES: ReadonlySet<Ref["role"]> = new Set<Ref["role"]>([
   "notehead",
+  "clefChange",
   "rest",
   "tie",
   "slur",

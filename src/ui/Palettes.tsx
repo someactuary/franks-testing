@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { glyphChar } from "@/render/smufl";
 import type { SmuflFontData } from "@/render/smufl/types";
-import type { Articulation, NotatedDuration, Placement, Score } from "@/model";
+import type { Articulation, ClefKind, NotatedDuration, Placement, Score } from "@/model";
 import type { Cursor, PaletteAction } from "@/input/types";
 import { keySignatureAt } from "@/input/navigation";
 import { KEY_SIG_OPTIONS, keySigLabel } from "./key-labels";
@@ -21,6 +21,12 @@ export function Smufl({ font, glyph }: { font: SmuflFontData; glyph: string }) {
     </span>
   );
 }
+
+/** Clef-change buttons: the two clefs piano music switches between. */
+const CLEF_CHANGES: { clef: ClefKind; label: string }[] = [
+  { clef: "treble", label: "Treble" },
+  { clef: "bass", label: "Bass" },
+];
 
 const DYNAMICS: { text: string; glyph: string }[] = [
   { text: "pp", glyph: "dynamicPP" },
@@ -349,6 +355,20 @@ export function Palettes({ font, score, cursor, onApplyAction }: PalettesProps) 
         <button type="button" title="Toggle dot" onClick={() => onApplyAction({ kind: "toggleDot" })}>
           •
         </button>
+      </div>
+
+      <div className="palette-group" aria-label="Clef change">
+        <span className="palette-group-label">Clef</span>
+        {CLEF_CHANGES.map((c) => (
+          <button
+            key={c.clef}
+            type="button"
+            title={`${c.label} clef from the selected note on (or from the cursor). Select a clef change and press Delete to remove it`}
+            onClick={() => onApplyAction({ kind: "clefChange", clef: c.clef })}
+          >
+            {c.label}
+          </button>
+        ))}
       </div>
 
       <div className="palette-group" aria-label="Key signature">

@@ -6,8 +6,8 @@
  * selection into a notation object without re-walking the score itself.
  */
 import type { Draft } from "immer";
-import type { Anchor, Articulation, Attachment, ClefKind, Id, Note, Score, Spanner, StemDirection } from "@/model";
-import { clefAtMeasureStart } from "@/engraving/engrave";
+import { clefAt, positionedEvents, ZERO } from "@/model";
+import type { Anchor, Articulation, Attachment, Fraction, Id, Note, Score, Spanner, StemDirection, Voice } from "@/model";
 import { staffStep } from "@/engraving/geometry";
 import { stemDirectionForSteps, voiceStemDirection } from "@/engraving/semantic";
 import { locateEvent, locateNote } from "./locate";
@@ -124,15 +124,9 @@ export function toggleArticulation(eventIds: readonly Id[], articulation: Articu
   };
 }
 
-/** The clef in effect for `staffIndex` at the start of `measureIndex` (M0 only honours clef changes at a measure's very start — see `clefAtMeasureStart`'s own doc comment). */
-function effectiveClef(score: Score, partIndex: number, staffIndex: number, measureIndex: number): ClefKind {
-  const part = score.parts[partIndex];
-  let running = part?.staves[staffIndex]?.initialClef ?? "treble";
-  if (!part) return running;
-  for (let mi = 0; mi <= measureIndex; mi++) {
-    running = clefAtMeasureStart(part.measures[mi]?.staves[staffIndex], running);
-  }
-  return running;
+/** Measure-relative offset of `eventId` in `voice` (0 if it isn't a top-level or tuplet event, e.g. a grace note). */
+function eventOffsetInVoice(voice: Voice, eventId: Id): Fraction {
+  return positionedEvents(voice).find((pe) => pe.event.id === eventId)?.offset ?? ZERO;
 }
 
 /**
@@ -149,10 +143,12 @@ function naturalStemDirection(
   staffIndex: number,
   measureIndex: number,
   voiceIndex: number,
+  offset: Fraction,
 ): StemDirection {
   const sm = score.parts[partIndex]?.measures[measureIndex]?.staves[staffIndex];
   if ((sm?.voices.length ?? 1) > 1) return voiceStemDirection(voiceIndex);
-  const clef = effectiveClef(score, partIndex, staffIndex, measureIndex);
+  // The clef in force at the note itself: a clef change earlier in the measure counts.
+  const clef = clefAt(score, partIndex, staffIndex, measureIndex, offset);
   return stemDirectionForSteps(notes.map((n) => staffStep(n.pitch, clef)));
 }
 
@@ -173,7 +169,8 @@ export function captureStemBaseline(score: Score, eventId: Id): StemBaseline | u
   const hit = locateEvent(score, eventId);
   if (!hit || hit.event.kind !== "note" || hit.event.stem === undefined) return undefined;
   const staffIndex = hit.event.staff ?? hit.staffIndex;
-  const natural = naturalStemDirection(score, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex);
+  const offset = eventOffsetInVoice(hit.voice, eventId);
+  const natural = naturalStemDirection(score, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex, offset);
   if (hit.event.stem !== natural) return undefined; // deliberately set against convention: never auto-touch it
   return { natural };
 }
@@ -197,7 +194,8 @@ export function reconcileStemAfterPitchChange(draft: Draft<Score>, eventId: Id, 
   const hit = locateEvent(draft, eventId);
   if (!hit || hit.event.kind !== "note") return;
   const staffIndex = hit.event.staff ?? hit.staffIndex;
-  const newNatural = naturalStemDirection(draft, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex);
+  const offset = eventOffsetInVoice(hit.voice, eventId);
+  const newNatural = naturalStemDirection(draft, hit.event.notes, hit.partIndex, staffIndex, hit.measureIndex, hit.voiceIndex, offset);
   if (newNatural !== baseline.natural) hit.event.stem = newNatural;
 }
 

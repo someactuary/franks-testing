@@ -148,10 +148,26 @@ export interface BeamGroup {
   counts: number[];
 }
 
+/** A clef change drawn inside a measure, before the column at or after `offset`. */
+export interface ClefMark {
+  offset: Fraction;
+  clef: ClefKind;
+  /** Selection id (`clefChangeId`). */
+  id: Id;
+}
+
 export interface StaffMeasureLayout {
   partIndex: number;
   staffIndex: number;
+  /** Clef in force at the start of the measure (after any change at offset 0). */
   clef: ClefKind;
+  /** Changes later in the measure, each drawn small before the notes it applies to. */
+  clefMarks: ClefMark[];
+  /**
+   * A change at the very start of the NEXT measure, drawn small just before this
+   * measure's barline (which is also the courtesy clef at a system's end). Set by engrave.
+   */
+  trailingClef?: ClefMark;
   events: EventLayout[];
   beams: BeamGroup[];
 }
@@ -236,6 +252,8 @@ export interface StaffMeasureInput {
   voices: Voice[];
   /** Ids of notes that are the *end* of a tie; they never take an automatic accidental. */
   tiedFrom?: ReadonlySet<Id>;
+  /** Clef changes after offset 0 (offset 0 is already in `clef`), in time order. */
+  clefMarks?: ClefMark[];
 }
 
 /** A positioned event plus the staff steps of its notes — the input to beam grouping. */
@@ -274,12 +292,20 @@ export function voiceRestShift(voiceIndex: number): number {
 export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout {
   const { font, clef, key } = input;
   const defaults = font.engravingDefaults;
+  const clefMarks = input.clefMarks ?? [];
+  // A change applies from its offset on, including an event starting exactly there.
+  const clefAtOffset = (offset: Fraction): ClefKind => {
+    let c = clef;
+    for (const m of clefMarks) if (cmp(m.offset, offset) <= 0) c = m.clef;
+    return c;
+  };
 
   const raw: RawEvent[] = [];
   for (const voice of input.voices) {
     for (const pe of positionedEvents(voice)) {
+      const eventClef = clefAtOffset(pe.offset);
       const steps =
-        pe.event.kind === "note" ? pe.event.notes.map((n) => staffStep(n.pitch, clef)) : [];
+        pe.event.kind === "note" ? pe.event.notes.map((n) => staffStep(n.pitch, eventClef)) : [];
       raw.push({
         event: pe.event,
         voiceIndex: voice.index,
@@ -338,7 +364,7 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
     const layout = layoutEvent({
       font,
       defaults,
-      clef,
+      clef: clefAtOffset(r.offset),
       memory,
       tiedFrom,
       partIndex: input.partIndex,
@@ -360,7 +386,7 @@ export function layoutStaffMeasure(input: StaffMeasureInput): StaffMeasureLayout
 
   if (multiVoice) resolveVoiceCollisions(events);
 
-  return { partIndex: input.partIndex, staffIndex: input.staffIndex, clef, events, beams };
+  return { partIndex: input.partIndex, staffIndex: input.staffIndex, clef, clefMarks, events, beams };
 }
 
 // ---------------------------------------------------------------------------

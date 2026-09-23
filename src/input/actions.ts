@@ -5,7 +5,7 @@
  * the same way. Never mutates `state`.
  */
 import { produce } from "immer";
-import { add, cmp, diatonic, fromDiatonic, keyAlter, newId, notated, ZERO, type Anchor, type Score } from "@/model";
+import { add, clefAt, cmp, diatonic, fromDiatonic, keyAlter, newId, notated, ZERO, type Anchor, type Score } from "@/model";
 import { locateEvent, locateNote } from "@/commands/locate";
 import { setMeta, setNotePitch } from "@/commands/basic";
 import { makeTuplet, setDurationAt, toggleDotAt } from "@/commands/edit";
@@ -22,6 +22,7 @@ import {
 } from "@/commands/notation";
 import { addStaff, removeStaff, setBracket, setClef, setStaffName } from "@/commands/staves";
 import { setKeySignature } from "@/commands/keysig";
+import { setClefChange } from "@/commands/clefs";
 import {
   clearForcedBreaks,
   clearNudge,
@@ -320,6 +321,23 @@ export const handleAction: ActionHandler = (state, action) => {
 
     case "setKeySignature":
       return { commands: [setKeySignature(cursor.measureIndex, action.keySig)] };
+
+    case "clefChange": {
+      // At the earliest selected note, else at the cursor. A change at the cursor's
+      // offset 0 applies from the start of that measure.
+      const selected = [...resolveSelection(score, state.selection)].sort((a, b) =>
+        cmp(absoluteOffset(score, a.measureIndex, a.offset), absoluteOffset(score, b.measureIndex, b.offset)),
+      );
+      const at = selected[0] ?? cursor;
+      const current = clefAt(score, at.partIndex, at.staffIndex, at.measureIndex, at.offset);
+      const hasChangeHere = (score.parts[at.partIndex]?.measures[at.measureIndex]?.staves[at.staffIndex]?.clefChanges ?? []).some(
+        (c) => cmp(c.at, at.offset) === 0,
+      );
+      if (current === action.clef && !hasChangeHere) {
+        return { commands: [], message: `Already in ${action.clef} clef here` };
+      }
+      return { commands: [setClefChange(at.partIndex, at.staffIndex, at.measureIndex, at.offset, action.clef)] };
+    }
 
     case "clearKeySignature":
       return { commands: [setKeySignature(cursor.measureIndex, null)] };

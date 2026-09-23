@@ -150,6 +150,8 @@ export type PaletteAction =
   | { kind: "addStaff"; atIndex: number; clef: ClefKind; name?: string }
   | { kind: "removeStaff"; staffIndex: number }
   | { kind: "setClef"; staffIndex: number; clef: ClefKind }
+  // A clef change from the first selected note (or the cursor, when nothing is selected) on.
+  | { kind: "clefChange"; clef: ClefKind }
   | { kind: "setStaffName"; staffIndex: number; name: string; abbreviation?: string }
   | { kind: "setBracket"; bracket: StaffGroupSymbol }
   // Score info: title/subtitle/composer/lyricist/copyright (src/ui/ScoreInfoPanel.tsx).

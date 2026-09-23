@@ -36,6 +36,8 @@ import {
 import { setLyric, setLyricExtend } from "@/commands/lyrics";
 import { clearNudge } from "@/commands/layout";
 import { clearEventDecorations, removeAttachment, removeSpanner } from "@/commands/notation";
+import { removeClefChange } from "@/commands/clefs";
+import { parseClefChangeId } from "@/model";
 import type { Command } from "@/commands/types";
 import { handleAction } from "./actions";
 import { copySelection, pasteAt } from "./clipboard";
@@ -229,7 +231,8 @@ function eraseSelected(state: EditorState): { commands: Command[]; cursor?: Curs
  * `MOVABLE_ROLES`/`SELECTABLE_ROLES` in src/ui/layout-utils.ts) isn't resolved by
  * `resolveSelection` (note/event only), so it's removed directly by its own id via
  * `removeSpanner`/`removeAttachment` — clearing any nudge recorded for it too, so
- * `layout.nudges` doesn't accumulate entries for markings that no longer exist.
+ * `layout.nudges` doesn't accumulate entries for markings that no longer exist. A clef
+ * change (a `clefChangeId`) is removed with `removeClefChange`.
  * Everything else in the selection still goes through `eraseSelected`.
  */
 function deleteSelection(
@@ -241,6 +244,10 @@ function deleteSelection(
   const commands: Command[] = [];
   const remaining: string[] = [];
   for (const id of selection.ids) {
+    if (parseClefChangeId(id)) {
+      commands.push(removeClefChange(id));
+      continue;
+    }
     if (spannerIds.has(id)) commands.push(removeSpanner(id));
     else if (attachmentIds.has(id)) commands.push(removeAttachment(id));
     else {
