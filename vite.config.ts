@@ -12,7 +12,10 @@ function omrPlugin(): Plugin {
   return {
     name: "pmn-omr-service",
     configureServer(server) {
-      const service = createOmrService({ jobsDir: path.resolve(__dirname, ".omr-jobs") });
+      const service = createOmrService({
+        jobsDir: path.resolve(__dirname, ".omr-jobs"),
+        pdfToPngCommand: ["/usr/bin/swift", path.resolve(__dirname, "scripts", "pdf-to-png.swift")],
+      });
       // connect strips the "/api/omr" mount prefix before calling `handle`, so the
       // handler itself only ever sees paths like "/status" or "/jobs/:id".
       server.middlewares.use("/api/omr", service.handle);

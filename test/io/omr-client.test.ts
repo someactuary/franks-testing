@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cancelOmrJob, fetchOmrResult, getOmrStatus, pollOmrJob, submitOmrJob } from "@/io/omr-client";
+import { cancelOmrJob, fetchOmrResult, fetchOmrResults, getOmrStatus, pollOmrJob, submitOmrJob } from "@/io/omr-client";
 import type { OmrJob, OmrStatus } from "@/io/omr-api";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -11,7 +11,17 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 function job(partial: Partial<OmrJob>): OmrJob {
-  return { id: "job-1", state: "running", filename: "scan.pdf", sheetsDone: 0, sheetsTotal: null, elapsedMs: 0, ...partial };
+  return {
+    id: "job-1",
+    state: "running",
+    filename: "scan.pdf",
+    engine: "audiveris",
+    sheetsDone: 0,
+    sheetsTotal: null,
+    elapsedMs: 0,
+    resultCount: 0,
+    ...partial,
+  };
 }
 
 afterEach(() => {
@@ -20,7 +30,11 @@ afterEach(() => {
 
 describe("getOmrStatus", () => {
   it("resolves with the parsed status on success", async () => {
-    const status: OmrStatus = { available: true, ocrLanguages: ["eng"] };
+    const status: OmrStatus = {
+      available: true,
+      ocrLanguages: ["eng"],
+      engines: { audiveris: { available: true }, homr: { available: false, hint: "install it" } },
+    };
     const fetchMock = vi.fn(async (url: string) => {
       expect(url).toBe("/api/omr/status");
       return jsonResponse(status);
@@ -52,7 +66,7 @@ describe("getOmrStatus", () => {
 describe("submitOmrJob", () => {
   it("posts the file with an X-Filename header and resolves with the new job's id", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe("/api/omr/jobs");
+      expect(url).toBe("/api/omr/jobs?engine=audiveris");
       expect(init?.method).toBe("POST");
       expect(new Headers(init?.headers).get("X-Filename")).toBe("scan.pdf");
       return jsonResponse({ id: "job-1" }, { status: 202 });
@@ -61,6 +75,17 @@ describe("submitOmrJob", () => {
 
     const blob = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])]);
     await expect(submitOmrJob(blob, "scan.pdf")).resolves.toBe("job-1");
+  });
+
+  it("names the chosen engine in the upload URL", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toBe("/api/omr/jobs?engine=homr");
+      return jsonResponse({ id: "job-2" }, { status: 202 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(submitOmrJob(new Blob(["x"]), "photo.jpg", "homr")).resolves.toBe("job-2");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces the server's { error } text on a rejected upload", async () => {
@@ -136,6 +161,21 @@ describe("fetchOmrResult", () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "Job is not finished" }, { status: 409 })));
 
     await expect(fetchOmrResult("job-1")).rejects.toThrow("Job is not finished");
+  });
+
+  it("fetches every page's result in order", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        return new Response(new Uint8Array([urls.length]), { status: 200 });
+      }),
+    );
+
+    const results = await fetchOmrResults(job({ state: "done", engine: "homr", resultCount: 3 }));
+    expect(urls).toEqual([0, 1, 2].map((i) => `/api/omr/jobs/job-1/result?index=${i}`));
+    expect(results.map((b) => new Uint8Array(b)[0])).toEqual([1, 2, 3]);
   });
 });
 

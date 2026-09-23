@@ -87,6 +87,47 @@ async function main() {
 main();
 `;
 
+// A fake homr (reads one image, writes "<image stem>.musicxml" beside it, with CoreML-style
+// "E5RT" noise like the real one) and a fake PDF page renderer (writes page-NNN.png files),
+// both driven by env vars like the fake Audiveris.
+const FAKE_HOMR_SOURCE = `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const image = process.argv[2];
+const stem = path.basename(image).replace(/\\.[^.]+$/, "");
+const failing = (process.env.FAKE_HOMR_FAIL || "").split(",").filter(Boolean);
+process.stdout.write("Processing " + image + "\\n");
+process.stderr.write("E5RT encountered an STL exception. msg = harmless noise\\n");
+process.stdout.write("\\x1b[32m[INFO] 2026-09-22 20:43:32,905 [RapidOCR] main.py:63: Using the OCR model\\x1b[0m\\n");
+if (process.env.FAKE_HOMR_MODE !== "hang") process.stdout.write("Found 3 staffs\\n");
+if (process.env.FAKE_HOMR_MODE === "hang") {
+  setInterval(() => {}, 1 << 30);
+} else if (failing.includes(stem)) {
+  process.stderr.write("Traceback: no staffs found on " + stem + "\\n");
+  process.exit(1);
+} else {
+  const out = image.replace(/\\.[^./]+$/, ".musicxml");
+  fs.writeFileSync(out, "<score-partwise><!-- " + stem + " --></score-partwise>");
+  process.stdout.write("Result was written to " + out + "\\n");
+}
+`;
+
+const FAKE_RENDERER_SOURCE = `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const [, , input, outDir, dpi] = process.argv;
+const pages = Number(process.env.FAKE_RENDER_PAGES || "3");
+if (!fs.existsSync(input) || dpi !== "300") process.exit(3);
+fs.mkdirSync(outDir, { recursive: true });
+process.stdout.write("pages=" + pages + "\\n");
+for (let i = 1; i <= pages; i++) {
+  fs.writeFileSync(path.join(outDir, "page-" + String(i).padStart(3, "0") + ".png"), "png");
+  process.stdout.write("page " + i + "/" + pages + "\\n");
+}
+`;
+
 function buildFixtureMxl(): Uint8Array {
   const musicxml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -114,6 +155,8 @@ function buildFixtureMxl(): Uint8Array {
 
 let fixtureRoot: string;
 let fakeAudiverisPath: string;
+let fakeHomrPath: string;
+let fakeRendererPath: string;
 let fixtureMxlPath: string;
 let fixtureMxlBytes: Uint8Array;
 
@@ -122,6 +165,12 @@ beforeAll(() => {
   fakeAudiverisPath = path.join(fixtureRoot, "fake-audiveris.js");
   writeFileSync(fakeAudiverisPath, FAKE_AUDIVERIS_SOURCE, "utf8");
   chmodSync(fakeAudiverisPath, 0o755);
+  fakeHomrPath = path.join(fixtureRoot, "fake-homr.js");
+  writeFileSync(fakeHomrPath, FAKE_HOMR_SOURCE, "utf8");
+  chmodSync(fakeHomrPath, 0o755);
+  fakeRendererPath = path.join(fixtureRoot, "fake-pdf-to-png.js");
+  writeFileSync(fakeRendererPath, FAKE_RENDERER_SOURCE, "utf8");
+  chmodSync(fakeRendererPath, 0o755);
   fixtureMxlBytes = buildFixtureMxl();
   fixtureMxlPath = path.join(fixtureRoot, "fixture.mxl");
   writeFileSync(fixtureMxlPath, fixtureMxlBytes);
@@ -153,6 +202,8 @@ async function setup(overrides: Partial<OmrServiceOptions> = {}): Promise<Harnes
   const service = createOmrService({
     jobsDir,
     audiverisPath: fakeAudiverisPath,
+    homrPath: fakeHomrPath,
+    pdfToPngCommand: [fakeRendererPath],
     timeoutMs: 5000,
     retentionMs: 60 * 60 * 1000,
     ...overrides,
@@ -173,7 +224,15 @@ async function setup(overrides: Partial<OmrServiceOptions> = {}): Promise<Harnes
 }
 
 let harness: Harness | undefined;
-const envKeysTouched = ["FAKE_AUDIVERIS_MODE", "FAKE_AUDIVERIS_SHEETS", "FAKE_AUDIVERIS_DELAY_MS", "FAKE_AUDIVERIS_FIXTURE_MXL"] as const;
+const envKeysTouched = [
+  "FAKE_AUDIVERIS_MODE",
+  "FAKE_AUDIVERIS_SHEETS",
+  "FAKE_AUDIVERIS_DELAY_MS",
+  "FAKE_AUDIVERIS_FIXTURE_MXL",
+  "FAKE_HOMR_MODE",
+  "FAKE_HOMR_FAIL",
+  "FAKE_RENDER_PAGES",
+] as const;
 
 afterEach(async () => {
   if (harness) {
@@ -195,10 +254,22 @@ function asBody(bytes: Uint8Array): BodyInit {
   return bytes as unknown as BodyInit;
 }
 
-async function uploadPdf(baseUrl: string, body: Uint8Array = pdfBytes(), filename?: string): Promise<Response> {
+async function uploadPdf(
+  baseUrl: string,
+  body: Uint8Array = pdfBytes(),
+  filename?: string,
+  engine?: string,
+): Promise<Response> {
   const headers: Record<string, string> = {};
   if (filename !== undefined) headers["X-Filename"] = filename;
-  return fetch(`${baseUrl}/jobs`, { method: "POST", body: asBody(body), headers });
+  const query = engine !== undefined ? `?engine=${engine}` : "";
+  return fetch(`${baseUrl}/jobs${query}`, { method: "POST", body: asBody(body), headers });
+}
+
+function pngBytes(): Uint8Array {
+  const buf = new Uint8Array(64);
+  buf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return buf;
 }
 
 function pdfBytes(size = 128): Uint8Array {
@@ -518,5 +589,132 @@ describe("createOmrService: shutdown", () => {
     await service.shutdown();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(jobsDir, { recursive: true, force: true });
+  });
+});
+
+describe("createOmrService: homr engine", () => {
+  async function runHomr(body: Uint8Array, overrides: Partial<OmrServiceOptions> = {}): Promise<{ id: string; job: OmrJob }> {
+    harness = await setup(overrides);
+    const res = await uploadPdf(harness.baseUrl, body, undefined, "homr");
+    expect(res.status).toBe(202);
+    const { id } = (await res.json()) as { id: string };
+    return { id, job: await pollJob(harness.baseUrl, id, isDone) };
+  }
+
+  it("reports homr's availability alongside Audiveris", async () => {
+    harness = await setup();
+    const status = await harness.service.status();
+    expect(status.engines.homr).toEqual({ available: true, path: fakeHomrPath });
+    expect(status.engines.audiveris.available).toBe(true);
+    expect(status.engines.audiveris.path).toBe(fakeAudiverisPath);
+  });
+
+  it("reports homr unavailable with a setup hint when it can't be found", async () => {
+    const fakeHome = mkdtempSync(path.join(tmpdir(), "pmn-omr-home-"));
+    const savedHome = process.env["HOME"];
+    const savedPmn = process.env["PMN_HOMR"];
+    delete process.env["PMN_HOMR"];
+    process.env["HOME"] = fakeHome;
+    try {
+      harness = await setup({ homrPath: path.join(fakeHome, "does-not-exist") });
+      const status = await harness.service.status();
+      expect(status.engines.homr.available).toBe(false);
+      expect(status.engines.homr.hint).toMatch(/setup-omr\.sh --homr/);
+      // Audiveris is unaffected.
+      expect(status.available).toBe(true);
+    } finally {
+      if (savedHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = savedHome;
+      if (savedPmn !== undefined) process.env["PMN_HOMR"] = savedPmn;
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unknown engine with 400", async () => {
+    harness = await setup();
+    const res = await uploadPdf(harness.baseUrl, pdfBytes(), undefined, "tesseract");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/unknown OMR engine/);
+  });
+
+  it("renders a PDF's pages, runs homr on each, and serves one MusicXML result per page", async () => {
+    process.env["FAKE_RENDER_PAGES"] = "3";
+    const { id, job } = await runHomr(pdfBytes());
+    expect(job).toMatchObject({ state: "done", engine: "homr", sheetsTotal: 3, sheetsDone: 3, resultCount: 3 });
+    expect(job.warnings).toBeUndefined();
+    // CoreML noise never becomes the progress message.
+    expect(job.message ?? "").not.toMatch(/E5RT/);
+    expect(job.message).toMatch(/^Page 3\/3: /);
+
+    for (const [i, stem] of ["page-001", "page-002", "page-003"].entries()) {
+      const result = await fetch(`${harness!.baseUrl}/jobs/${id}/result?index=${i}`);
+      expect(result.status).toBe(200);
+      expect(result.headers.get("content-type")).toBe("application/vnd.recordare.musicxml+xml");
+      expect(await result.text()).toContain(stem);
+    }
+    expect((await fetch(`${harness!.baseUrl}/jobs/${id}/result?index=3`)).status).toBe(404);
+  });
+
+  it("runs homr directly on an image upload, without rendering", async () => {
+    process.env["FAKE_RENDER_PAGES"] = "0"; // would fail the job if the renderer ran
+    const { id, job } = await runHomr(pngBytes());
+    expect(job).toMatchObject({ state: "done", sheetsTotal: 1, resultCount: 1 });
+    const result = await fetch(`${harness!.baseUrl}/jobs/${id}/result`);
+    expect(await result.text()).toContain("input");
+  });
+
+  it("skips a page homr can't read, with a warning, and keeps the rest", async () => {
+    process.env["FAKE_RENDER_PAGES"] = "3";
+    process.env["FAKE_HOMR_FAIL"] = "page-002";
+    const { id, job } = await runHomr(pdfBytes());
+    expect(job).toMatchObject({ state: "done", resultCount: 2 });
+    expect(job.warnings).toEqual(["homr couldn't read page 2 (exit code 1); it was skipped."]);
+    expect(await (await fetch(`${harness!.baseUrl}/jobs/${id}/result?index=1`)).text()).toContain("page-003");
+  });
+
+  it("fails the job, with the log tail, when homr reads no page at all", async () => {
+    process.env["FAKE_RENDER_PAGES"] = "2";
+    process.env["FAKE_HOMR_FAIL"] = "page-001,page-002";
+    const { job } = await runHomr(pdfBytes());
+    expect(job.state).toBe("error");
+    expect(job.error).toMatch(/couldn't read any page/);
+    expect(job.error).toMatch(/no staffs found/);
+  });
+
+  it("fails the job when the PDF renderer fails", async () => {
+    const { job } = await runHomr(pdfBytes(), { pdfToPngCommand: [path.join(fixtureRoot, "missing-renderer")] });
+    expect(job.state).toBe("error");
+    expect(job.error).toMatch(/rendering the PDF's pages failed/);
+  });
+
+  it("times out a hung homr run", async () => {
+    process.env["FAKE_HOMR_MODE"] = "hang";
+    process.env["FAKE_RENDER_PAGES"] = "2";
+    const { job } = await runHomr(pdfBytes(), { timeoutMs: 150 });
+    expect(job.state).toBe("error");
+    expect(job.error).toMatch(/timed out/);
+  });
+
+  it("shows homr's colored, prefixed log lines as plain text", async () => {
+    process.env["FAKE_HOMR_MODE"] = "hang";
+    harness = await setup();
+    const res = await uploadPdf(harness.baseUrl, pngBytes(), undefined, "homr");
+    const { id } = (await res.json()) as { id: string };
+    const job = await pollJob(harness.baseUrl, id, (j) => /OCR model/.test(j.message ?? ""));
+    expect(job.message).toBe("Using the OCR model");
+    await fetch(`${harness.baseUrl}/jobs/${id}`, { method: "DELETE" });
+  });
+
+  it("cancels a running homr job, killing its process", async () => {
+    process.env["FAKE_HOMR_MODE"] = "hang";
+    harness = await setup();
+    const res = await uploadPdf(harness.baseUrl, pngBytes(), undefined, "homr");
+    const { id } = (await res.json()) as { id: string };
+    await pollJob(harness.baseUrl, id, (j) => j.state === "running" && /homr|Processing/.test(j.message ?? ""));
+
+    const del = await fetch(`${harness.baseUrl}/jobs/${id}`, { method: "DELETE" });
+    expect(del.status).toBe(204);
+    expect((await getJob(harness.baseUrl, id)).status).toBe(404);
+    expect(existsSync(path.join(harness.jobsDir, id))).toBe(false);
   });
 });

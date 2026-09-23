@@ -1,5 +1,5 @@
 /**
- * Post-processing of a score imported from OMR output (Audiveris MusicXML). Pure.
+ * Post-processing of a score imported from OMR output (Audiveris or homr MusicXML). Pure.
  * See docs/ARCHITECTURE.md "M4 contracts".
  */
 import {
@@ -35,7 +35,7 @@ export interface OmrCleanupOptions {
 export interface OmrReviewItem {
   measureIndex: number;
   staffIndex: number;
-  reason: "padded-voice" | "overfull-voice" | "validation" | "suspicious-duration";
+  reason: "padded-voice" | "overfull-voice" | "validation" | "suspicious-duration" | "page-mismatch";
   detail: string;
 }
 
@@ -240,6 +240,9 @@ export function cleanupOmrScore(score: Score, opts: OmrCleanupOptions): OmrClean
   const clone = structuredClone(score);
 
   stripGenericNames(clone);
+  // Both engines label every staff "Voice" (a choir sound) or guess; the engine's
+  // instrument is never a reading of the page, so an OMR import always plays as piano.
+  for (const part of clone.parts) part.midiProgram = 0;
   if (opts.keep === "essentials") stripEssentials(clone);
   if (!opts.keepLayout) clearLayoutBreaks(clone);
 

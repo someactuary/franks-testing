@@ -4,7 +4,7 @@
  * dependency on how/where the service is mounted. See docs/ARCHITECTURE.md
  * "M4 contracts: PDF import (OMR)".
  */
-import type { OmrError, OmrJob, OmrStatus } from "./omr-api";
+import type { OmrEngine, OmrError, OmrJob, OmrStatus } from "./omr-api";
 
 const BASE = "/api/omr";
 
@@ -41,10 +41,10 @@ export async function getOmrStatus(signal?: AbortSignal): Promise<OmrStatus> {
 // Jobs
 // ---------------------------------------------------------------------------
 
-/** Submits a file for recognition. Resolves with the new job's id. */
-export async function submitOmrJob(file: File | Blob, filename: string): Promise<string> {
+/** Submits a file for recognition by `engine`. Resolves with the new job's id. */
+export async function submitOmrJob(file: File | Blob, filename: string, engine: OmrEngine = "audiveris"): Promise<string> {
   const res = await checkOk(
-    await fetch(`${BASE}/jobs`, {
+    await fetch(`${BASE}/jobs?engine=${engine}`, {
       method: "POST",
       headers: { "X-Filename": filename },
       body: file,
@@ -108,10 +108,20 @@ export async function pollOmrJob(id: string, options: PollOmrJobOptions = {}): P
   }
 }
 
-/** Fetches the finished job's result (.mxl bytes). Only meaningful once the job is "done". */
-export async function fetchOmrResult(id: string): Promise<ArrayBuffer> {
-  const res = await checkOk(await fetch(`${BASE}/jobs/${encodeURIComponent(id)}/result`));
+/**
+ * Fetches one of the finished job's results (MusicXML or .mxl bytes; `index` < job.resultCount).
+ * Only meaningful once the job is "done".
+ */
+export async function fetchOmrResult(id: string, index = 0): Promise<ArrayBuffer> {
+  const res = await checkOk(await fetch(`${BASE}/jobs/${encodeURIComponent(id)}/result?index=${index}`));
   return await res.arrayBuffer();
+}
+
+/** Fetches every result of a finished job, in page order (one for Audiveris, one per page for homr). */
+export async function fetchOmrResults(job: OmrJob): Promise<ArrayBuffer[]> {
+  const results: ArrayBuffer[] = [];
+  for (let i = 0; i < Math.max(1, job.resultCount); i++) results.push(await fetchOmrResult(job.id, i));
+  return results;
 }
 
 /** Cancels a running/queued job and frees its temp files. A already-gone job (404) is not an error. */

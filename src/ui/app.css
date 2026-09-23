@@ -767,7 +767,7 @@ body {
   margin: 0;
 }
 
-/* Import PDF dialog (M4: PDF import) */
+/* Import PDF or photo dialog (M4: PDF import; engine choice: Audiveris or homr) */
 .import-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -851,6 +851,13 @@ body {
   align-items: flex-start;
   gap: 0.4rem;
   margin: 6px 0;
+}
+
+.import-dialog-radio.is-disabled {
+  color: #999;
+}
+.import-dialog-engine-hint {
+  display: block;
 }
 
 .import-dialog-checkbox {

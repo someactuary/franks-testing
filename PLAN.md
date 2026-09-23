@@ -629,3 +629,17 @@ score canvas is custom SVG either way).
   yet by Frank's ear (expect tweaks to levels/tone); notes entered by mouse/MIDI keyboard
   aren't sounded (only the score playback is); no per-part instrument choice (one sound for
   the whole score); real-piano MIDI test still pending.
+- 2026-09-22 (feature: homr as a second OMR engine). Frank saw odd Audiveris results on
+  tonight's imports and worried another Claude session had changed the project. It had,
+  harmlessly: uncommitted work from the iOS photo-app session (importer keeps a part's MIDI
+  program; per-track instruments in `render-midi.swift`; `docs/IOS-APP-HANDOFF.md`), now
+  committed. The bad results came from the inputs (a cropped phone photo with cut-off
+  clefs, a photo that crashed Audiveris, a scan with no printed time signature). Added homr
+  (better on photos in the Sep 21 bake-off) as a choice in the import dialog: server
+  renders PDF pages with `scripts/pdf-to-png.swift` and runs homr per page;
+  `src/io/omr-merge.ts` joins the pages, lining staves up by clef; cleanup now always sets
+  OMR imports to piano (both engines tag parts as choir "oohs"). `setup-omr.sh --homr`.
+  1090 tests (21 new). Verified with the real homr and in headless Chromium. Carry-overs:
+  homr writes no time signature for many pieces (import assumes 4/4); no automatic engine
+  choice (photos → homr) yet; Audiveris's own log warnings (missing clefs, no time
+  signature) still aren't shown in the review panel.

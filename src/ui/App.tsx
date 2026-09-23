@@ -696,7 +696,7 @@ export function App() {
           >
             <ClefIcon />
           </button>
-          <button type="button" className="icon-button" title="Import PDF" onClick={() => setImportOpen(true)}>
+          <button type="button" className="icon-button" title="Import PDF or photo" onClick={() => setImportOpen(true)}>
             <PdfIcon />
           </button>
         </div>

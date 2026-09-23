@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Installs Audiveris (OMR engine) and its English OCR data for the local OMR
-# service (server/omr-service.ts). Idempotent: safe to re-run, each step is
-# skipped if already done. See docs/ARCHITECTURE.md "M4 contracts: PDF import
-# (OMR)".
+# service (server/omr-service.ts), and optionally homr, the second engine that
+# does better on phone photos. Idempotent: safe to re-run, each step is skipped
+# if already done. See docs/ARCHITECTURE.md "M4 contracts: PDF import (OMR)"
+# and "Second OMR engine: homr".
 #
 # Usage:
-#   bash scripts/setup-omr.sh            install whatever is missing
-#   bash scripts/setup-omr.sh --check    report status only, install nothing
+#   bash scripts/setup-omr.sh                    install whatever is missing (Audiveris + OCR data)
+#   bash scripts/setup-omr.sh --homr             also install homr (Python, via uv) and its models
+#   bash scripts/setup-omr.sh --check [--homr]   report status only, install nothing
 set -euo pipefail
 
 REPO="Audiveris/audiveris"
@@ -18,15 +20,21 @@ TESSDATA_DIR="$HOME/Library/Application Support/AudiverisLtd/audiveris/tessdata"
 ENG_TRAINEDDATA="$TESSDATA_DIR/eng.traineddata"
 ENG_URL="https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
 
+HOMR_BIN="$HOME/.local/bin/homr"
+HOMR_PYTHON="3.12"
+
 CHECK_ONLY=0
-case "${1:-}" in
-  "") ;;
-  --check) CHECK_ONLY=1 ;;
-  *)
-    echo "usage: $0 [--check]" >&2
-    exit 1
-    ;;
-esac
+WITH_HOMR=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_ONLY=1 ;;
+    --homr) WITH_HOMR=1 ;;
+    *)
+      echo "usage: $0 [--check] [--homr]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 log() { echo "[setup-omr] $*"; }
 
@@ -114,6 +122,27 @@ install_ocr_data() {
   log "English OCR data installed at $ENG_TRAINEDDATA"
 }
 
+install_homr() {
+  if [[ -x "$HOMR_BIN" ]]; then
+    log "homr already installed at $HOMR_BIN (skipping)"
+    return
+  fi
+  if [[ "$CHECK_ONLY" == "1" ]]; then
+    log "homr not installed (would run: uv tool install --python $HOMR_PYTHON homr)"
+    return
+  fi
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "[setup-omr] homr is installed with uv; install uv first: https://docs.astral.sh/uv/" >&2
+    exit 1
+  fi
+  log "Installing homr with uv (Python $HOMR_PYTHON)..."
+  uv tool install --python "$HOMR_PYTHON" homr
+  # homr downloads its models on first use; do it now so the first import isn't slow.
+  log "Downloading homr's models (about 110 MB, once)..."
+  "$HOMR_BIN" --init
+  log "homr installed at $HOMR_BIN"
+}
+
 print_status() {
   echo
   echo "== OMR setup status =="
@@ -129,8 +158,22 @@ print_status() {
   else
     echo "OCR (eng): NOT installed; lyrics and other text will be misread (run 'bash scripts/setup-omr.sh')"
   fi
+  if [[ -x "$HOMR_BIN" ]]; then
+    echo "homr:      installed at $HOMR_BIN"
+  else
+    echo "homr:      not installed; optional, better for phone photos (run 'bash scripts/setup-omr.sh --homr')"
+  fi
+  # homr reads images only; PDFs are rendered to page images with scripts/pdf-to-png.swift.
+  if [[ -x /usr/bin/swift ]] && /usr/bin/swift --version >/dev/null 2>&1; then
+    echo "swift:     available (renders PDF pages for homr)"
+  else
+    echo "swift:     NOT available; homr can read photos but not PDFs (run 'xcode-select --install')"
+  fi
 }
 
 install_audiveris
 install_ocr_data
+if [[ "$WITH_HOMR" == "1" ]]; then
+  install_homr
+fi
 print_status

@@ -252,6 +252,57 @@ spacing; the rule assumes no item sits more than 500 sp from its staff.
 `PMN_OMR_REAL=1 npx vitest run server/omr-real-run.test.ts` (needs Audiveris and the
 local sample PDF).
 
+### Second OMR engine: homr (2026-09-22)
+
+Audiveris does well on clean PDFs but badly on phone photos: on 2026-09-22 it crashed on
+one photo and lost track of which staff belongs to which part on a cropped one. The
+iOS photo-app bake-off (2026-09-21, `play_from_photos/bakeoff`) measured **homr**
+(open source, AGPL, Python + ONNX/CoreML models) at 96% rhythm-consistent measures on
+phone photos vs Audiveris's 86%. homr is now a second engine; the user picks one per
+import. Audiveris stays the default because homr reads no text (lyrics, dynamics, tempo,
+titles from OCR are lost) and often writes no time signature (the importer then assumes
+4/4, and cleanup pads and flags the measures).
+
+- **Install**: `bash scripts/setup-omr.sh --homr` runs `uv tool install --python 3.12
+  homr` and `homr --init` (downloads ~110 MB of models once). Found at `opts.homrPath`,
+  `$PMN_HOMR`, or `~/.local/bin/homr`. `GET /status` now also returns
+  `engines: { audiveris, homr }`, each `{ available, path?, version?, hint? }`; the old
+  top-level fields still describe Audiveris.
+- **Jobs**: `POST /jobs?engine=homr` (default `audiveris`; anything else is 400). homr reads
+  one image and writes `<stem>.musicxml` beside it, so for a PDF the service first renders
+  each page to a 300 dpi PNG with `scripts/pdf-to-png.swift` (PDFKit, honors `/Rotate`;
+  ~1 s per page) and then runs homr once per page, reporting page progress through
+  `sheetsDone/sheetsTotal`. A page homr can't read becomes an entry in
+  `OmrJob.warnings` and is skipped; the job fails only if no page could be read. The
+  timeout covers the whole job; cancel kills whichever step is running. homr's CoreML
+  "E5RT" warnings are dropped from the log, and its colored `[INFO] … file.py:NN:` prefix
+  is stripped from the progress message.
+- **Results**: `OmrJob.resultCount` says how many results a done job has (1 for Audiveris,
+  one per read page for homr); `GET /jobs/:id/result?index=N` serves each (plain
+  MusicXML for homr, `…musicxml+xml`). The client's `fetchOmrResults(job)` gets them all.
+- **Joining pages** (`src/io/omr-merge.ts`, pure): each page is imported on its own
+  (`importMusicXml` always gives one part) and `mergeOmrPages` appends them. homr sometimes
+  drops a staff on a page (e.g. the small solo staff above a piano), so every page's staves
+  are lined up with the fullest page's by clef (best-matching offset, topmost on a tie);
+  missing staves get whole-measure rests and a `page-mismatch` review item. Cross-staff
+  events, spanner/attachment staff indices and measure anchors are shifted with their page;
+  a page's restated key/time signature is dropped unless it changes; a page that opens in
+  a different clef than its staff was left in gets a clef change; each later page starts
+  with a page break.
+- **Instrument**: both engines label parts "Voice" with MIDI program 54 (choir "oohs").
+  Now that the importer keeps a file's program, `cleanupOmrScore` resets every part to
+  program 0 (piano): an OMR engine's instrument is a guess, never a reading of the page.
+- **UI**: the dialog is now "Import PDF or photo". The choose step has a "Recognize with"
+  radio pair (Audiveris / homr, with one-line strengths; an engine that isn't installed is
+  disabled and shows its setup hint); the choice is remembered in `localStorage`
+  (`pmn.omrEngine`). The OCR warning only shows for Audiveris. Progress counts pages; job
+  warnings show above the import options.
+- Verified 2026-09-22 with the real engine: a 2-page phone-photo PDF (11 s, 491 note
+  events, one `page-mismatch`) and a phone JPEG that crashed Audiveris (5.6 s, 32
+  measures), then through the dialog in headless Chromium. Known limits: homr misses time
+  signatures and small cue-size staves; on a photo cropped through the clefs it guesses
+  the clefs (wrong pitches for that system), as Audiveris does.
+
 ## Manual layout control (2026-09-15)
 
 Requested by Frank after PDF import left a real file with a sparse last page (a

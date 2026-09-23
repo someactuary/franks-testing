@@ -1,15 +1,17 @@
 /**
- * "Import PDF…" wizard (docs/ARCHITECTURE.md "M4 contracts: PDF import (OMR)").
- * Steps: check the service is available -> choose a file -> upload + watch
- * progress -> pick cleanup options -> hand the imported Score to the caller.
- * Owns no score state itself; `onImported` is the only way anything leaves.
+ * "Import PDF or photo…" wizard (docs/ARCHITECTURE.md "M4 contracts: PDF import (OMR)"
+ * and "Second OMR engine: homr"). Steps: check which engines are available -> choose an
+ * engine and a file -> upload + watch progress -> pick cleanup options -> hand the
+ * imported Score to the caller. Owns no score state itself; `onImported` is the only way
+ * anything leaves.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { OmrJob, OmrStatus } from "@/io/omr-api";
-import { cancelOmrJob, fetchOmrResult, getOmrStatus, pollOmrJob, submitOmrJob } from "@/io/omr-client";
+import { OMR_ENGINES, type OmrEngine, type OmrJob, type OmrStatus } from "@/io/omr-api";
+import { cancelOmrJob, fetchOmrResults, getOmrStatus, pollOmrJob, submitOmrJob } from "@/io/omr-client";
 import { importMusicXml, MusicXmlError } from "@/io/musicxml";
 import { cleanupOmrScore } from "@/io/omr-cleanup";
+import { mergeOmrPages } from "@/io/omr-merge";
 import type { OmrCleanupOptions, OmrReviewItem } from "@/io/omr-cleanup";
 import type { Score } from "@/model";
 
@@ -30,7 +32,14 @@ type Step =
   | { kind: "status" }
   | { kind: "choose" }
   | { kind: "uploading"; file: File; sourceBytes: ArrayBuffer | null; job: OmrJob | null; startedAt: number }
-  | { kind: "options"; file: File; sourceBytes: ArrayBuffer | null; resultBuffer: ArrayBuffer };
+  | {
+      kind: "options";
+      file: File;
+      sourceBytes: ArrayBuffer | null;
+      /** One MusicXML result per page for homr; a single .mxl for Audiveris. */
+      resultBuffers: ArrayBuffer[];
+      warnings: string[];
+    };
 
 interface ErrorState {
   message: string;
@@ -39,6 +48,38 @@ interface ErrorState {
 
 const ACCEPTED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg"];
 const SETUP_COMMAND = "bash scripts/setup-omr.sh";
+const ENGINE_STORAGE_KEY = "pmn.omrEngine";
+
+const ENGINE_INFO: Record<OmrEngine, { label: string; description: string }> = {
+  audiveris: {
+    label: "Audiveris",
+    description: "Best for clean PDFs and scans. Also reads lyrics, dynamics, and other text.",
+  },
+  homr: {
+    label: "homr",
+    description:
+      "Better for phone photos, including skewed or curved pages. Reads notes only (no lyrics or text), " +
+      "and may miss the time signature.",
+  },
+};
+
+function loadEngine(): OmrEngine {
+  try {
+    const saved = localStorage.getItem(ENGINE_STORAGE_KEY);
+    if (saved && (OMR_ENGINES as readonly string[]).includes(saved)) return saved as OmrEngine;
+  } catch {
+    // Storage unavailable (private window, blocked site data): use the default.
+  }
+  return "audiveris";
+}
+
+function saveEngine(engine: OmrEngine): void {
+  try {
+    localStorage.setItem(ENGINE_STORAGE_KEY, engine);
+  } catch {
+    // Not worth surfacing; the choice just won't be remembered.
+  }
+}
 
 function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -68,6 +109,7 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
   const [error, setError] = useState<ErrorState | null>(null);
   const [keep, setKeep] = useState<OmrCleanupOptions["keep"]>("essentials");
   const [keepLayout, setKeepLayout] = useState(true);
+  const [engine, setEngine] = useState<OmrEngine>(loadEngine);
   const [now, setNow] = useState(() => Date.now());
 
   const abortRef = useRef<AbortController | null>(null);
@@ -80,7 +122,10 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
     try {
       const s = await getOmrStatus();
       setStatus(s);
-      setStep(s.available ? { kind: "choose" } : { kind: "status" });
+      const anyAvailable = OMR_ENGINES.some((e) => s.engines[e].available);
+      // Fall back to an installed engine if the remembered one isn't.
+      setEngine((current) => (s.engines[current].available ? current : (OMR_ENGINES.find((e) => s.engines[e].available) ?? current)));
+      setStep(anyAvailable ? { kind: "choose" } : { kind: "status" });
     } catch (err) {
       setError({ message: messageOf(err), retry: () => void fetchStatus() });
     }
@@ -108,15 +153,15 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
     abortRef.current = controller;
     jobIdRef.current = null;
     try {
-      const id = await submitOmrJob(file, file.name);
+      const id = await submitOmrJob(file, file.name, engine);
       jobIdRef.current = id;
-      await pollOmrJob(id, {
+      const job = await pollOmrJob(id, {
         signal: controller.signal,
         intervalMs: 700,
         onProgress: (job) => setStep((s) => (s.kind === "uploading" ? { ...s, job } : s)),
       });
-      const resultBuffer = await fetchOmrResult(id);
-      setStep({ kind: "options", file, sourceBytes, resultBuffer });
+      const resultBuffers = await fetchOmrResults(job);
+      setStep({ kind: "options", file, sourceBytes, resultBuffers, warnings: job.warnings ?? [] });
     } catch (err) {
       if (controller.signal.aborted) {
         // Cancelled by the user (handleCancelUpload already moved the step back).
@@ -147,8 +192,10 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
 
   function handleOpenInEditor(optionsStep: Extract<Step, { kind: "options" }>) {
     try {
-      const rawScore = importMusicXml(optionsStep.resultBuffer);
-      const { score, review } = cleanupOmrScore(rawScore, { keep, keepLayout });
+      const merged = mergeOmrPages(optionsStep.resultBuffers.map((buffer) => importMusicXml(buffer)));
+      const cleaned = cleanupOmrScore(merged.score, { keep, keepLayout });
+      const { score } = cleaned;
+      const review = [...merged.review, ...cleaned.review].sort((a, b) => a.measureIndex - b.measureIndex);
       if (!score.meta.title) score.meta.title = titleFromFilename(optionsStep.file.name);
       onImported({ score, review, pdfBytes: optionsStep.sourceBytes, pdfFilename: optionsStep.file.name });
     } catch (err) {
@@ -156,13 +203,20 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
     }
   }
 
-  const ocrWarning = status?.available && status.ocrLanguages.length === 0;
+  // homr reads no text at all, so the OCR data only matters for Audiveris.
+  const ocrWarning = engine === "audiveris" && status?.available && status.ocrLanguages.length === 0;
+  const pageLabel = (n: number) => (n === 1 ? "page" : "pages");
+
+  function chooseEngine(next: OmrEngine) {
+    setEngine(next);
+    saveEngine(next);
+  }
 
   return (
     <div className="import-dialog-overlay" role="presentation" onPointerDown={(e) => e.stopPropagation()}>
-      <div className="import-dialog" role="dialog" aria-label="Import PDF">
+      <div className="import-dialog" role="dialog" aria-label="Import PDF or photo">
         <div className="import-dialog-header">
-          <strong>Import PDF</strong>
+          <strong>Import PDF or photo</strong>
           <button type="button" onClick={onClose} aria-label="Close import dialog">
             &times;
           </button>
@@ -193,7 +247,7 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
                 <p>Checking the OMR service…</p>
               ) : (
                 <div>
-                  <p>{status.hint ?? "The OMR service isn't available."}</p>
+                  <p>{status.hint ?? "No OMR engine is available."}</p>
                   <pre className="import-dialog-code">
                     <code>{SETUP_COMMAND}</code>
                   </pre>
@@ -210,7 +264,31 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
 
             {step.kind === "choose" && (
               <div>
-                <p>Choose a scanned or exported page to recognize.</p>
+                <fieldset className="import-dialog-fieldset">
+                  <legend>Recognize with</legend>
+                  {OMR_ENGINES.map((e) => {
+                    const engineStatus = status?.engines[e];
+                    const available = engineStatus?.available ?? false;
+                    return (
+                      <label key={e} className={`import-dialog-radio${available ? "" : " is-disabled"}`}>
+                        <input
+                          type="radio"
+                          name="omr-engine"
+                          checked={engine === e}
+                          disabled={!available}
+                          onChange={() => chooseEngine(e)}
+                        />
+                        <span>
+                          <strong>{ENGINE_INFO[e].label}</strong>: {ENGINE_INFO[e].description}
+                          {!available && engineStatus?.hint && (
+                            <span className="import-dialog-hint import-dialog-engine-hint">{engineStatus.hint}</span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+                <p>Choose a PDF, a scan, or a photo of the music.</p>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -231,14 +309,18 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
 
             {step.kind === "uploading" && (
               <div>
-                <p>Recognizing {step.file.name}…</p>
+                <p>
+                  Recognizing {step.file.name} with {ENGINE_INFO[step.job?.engine ?? engine].label}…
+                </p>
                 {step.job?.sheetsTotal != null ? (
                   <progress value={step.job.sheetsDone} max={step.job.sheetsTotal} className="import-dialog-progress" />
                 ) : (
                   <progress className="import-dialog-progress" />
                 )}
                 <p className="import-dialog-hint">
-                  {step.job?.sheetsTotal != null ? `${step.job.sheetsDone} / ${step.job.sheetsTotal} sheets` : "Working…"}
+                  {step.job?.sheetsTotal != null
+                    ? `${step.job.sheetsDone} / ${step.job.sheetsTotal} ${pageLabel(step.job.sheetsTotal)}`
+                    : "Working…"}
                   {" · "}
                   Elapsed {formatElapsed(step.job?.elapsedMs ?? now - step.startedAt)}
                 </p>
@@ -253,6 +335,11 @@ export function ImportPdfDialog({ onClose, onImported }: ImportPdfDialogProps) {
 
             {step.kind === "options" && (
               <div>
+                {step.warnings.map((w) => (
+                  <p key={w} className="import-dialog-warning">
+                    {w}
+                  </p>
+                ))}
                 <fieldset className="import-dialog-fieldset">
                   <legend>What to import</legend>
                   <label className="import-dialog-radio">

@@ -25,7 +25,10 @@ function parsePort(arg: string | undefined): number {
 
 const port = parsePort(process.argv[2]);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const service = createOmrService({ jobsDir: path.join(repoRoot, ".omr-jobs") });
+const service = createOmrService({
+  jobsDir: path.join(repoRoot, ".omr-jobs"),
+  pdfToPngCommand: ["/usr/bin/swift", path.join(repoRoot, "scripts", "pdf-to-png.swift")],
+});
 
 const server = createServer((req, res) => {
   const url = req.url ?? "/";

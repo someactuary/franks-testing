@@ -1,6 +1,6 @@
 /**
- * Local OMR service: runs Audiveris out-of-process and exposes it over a small
- * framework-free `(req, res, next)` HTTP handler. Mounted by the Vite dev server
+ * Local OMR service: runs an OMR engine (Audiveris, or homr for photos) out-of-process
+ * and exposes it over a small framework-free `(req, res, next)` HTTP handler. Mounted by the Vite dev server
  * plugin (vite.config.ts) and by scripts/omr-server.ts (standalone, same handler).
  * See docs/ARCHITECTURE.md "M4 contracts: PDF import (OMR)" and src/io/omr-api.ts
  * for the wire contract this implements.
@@ -16,8 +16,9 @@
  *    stripped, length capped) and never interpolated into a filesystem path.
  *    The on-disk name is always `<jobDir>/input.<ext>`, derived from the id we
  *    generate and the sniffed extension, never from client input.
- *  - Audiveris is spawned with an argument array (no shell), so upload content
- *    or the resolved paths can't inject shell syntax.
+ *  - Every engine (and the PDF page renderer homr needs) is spawned with an
+ *    argument array (no shell), so upload content or the resolved paths can't
+ *    inject shell syntax. The engine choice is checked against a fixed list.
  */
 import { randomUUID } from "node:crypto";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
@@ -26,19 +27,39 @@ import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promise
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
-import { OMR_MAX_UPLOAD_BYTES, type OmrError, type OmrJob, type OmrJobState, type OmrStatus } from "../src/io/omr-api";
+import {
+  OMR_ENGINES,
+  OMR_MAX_UPLOAD_BYTES,
+  type OmrEngine,
+  type OmrEngineStatus,
+  type OmrError,
+  type OmrJob,
+  type OmrJobState,
+  type OmrStatus,
+} from "../src/io/omr-api";
 
 const INPUT_STEM = "input";
 const LOG_TAIL_LINES = 40;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const DEFAULT_RETENTION_MS = 60 * 60 * 1000; // 1 hour
 const SETUP_HINT = "Run `bash scripts/setup-omr.sh` to install it.";
+const HOMR_SETUP_HINT = "Run `bash scripts/setup-omr.sh --homr` to install it.";
+/** Page renders for homr: 300 dpi matches what Audiveris uses internally for PDFs. */
+const PDF_RENDER_DPI = "300";
 
 export interface OmrServiceOptions {
   /** Directory job subdirectories are created under. Created if missing. */
   jobsDir: string;
   /** Explicit Audiveris executable path, tried before the usual fallbacks. */
   audiverisPath?: string;
+  /** Explicit homr executable path, tried before $PMN_HOMR and ~/.local/bin/homr. */
+  homrPath?: string;
+  /**
+   * Command that renders a PDF's pages to PNGs for homr; the service appends
+   * `<input.pdf> <outDir> <dpi>`. It must write page-001.png, page-002.png, ... into
+   * outDir. Default: `swift scripts/pdf-to-png.swift`, resolved against the repo root.
+   */
+  pdfToPngCommand?: string[];
   /** Per-job wall-clock timeout in ms. Default 10 minutes. */
   timeoutMs?: number;
   /** How long a finished job's directory is kept before being swept, in ms. Default 1 hour. */
@@ -71,7 +92,10 @@ interface JobRecord {
   finishedAt?: number;
   dir: string;
   inputExt: InputExt;
-  resultPath?: string;
+  engine: OmrEngine;
+  /** Result files in page order, set when the job is done. */
+  resultPaths: string[];
+  warnings: string[];
   logTail: string[];
   proc?: ChildProcess;
   timedOut?: boolean;
@@ -108,6 +132,27 @@ async function resolveAudiverisPath(opts: OmrServiceOptions): Promise<string | u
     if (await isExecutableFile(candidate)) return candidate;
   }
   return undefined;
+}
+
+/** Resolution order: opts.homrPath, then $PMN_HOMR, then ~/.local/bin/homr (where `uv tool install` puts it). */
+async function resolveHomrPath(opts: OmrServiceOptions): Promise<string | undefined> {
+  const candidates = [opts.homrPath, process.env["PMN_HOMR"], path.join(homedir(), ".local", "bin", "homr")].filter(
+    (p): p is string => !!p,
+  );
+  for (const candidate of candidates) {
+    if (await isExecutableFile(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function defaultPdfToPngCommand(): string[] {
+  // server/ sits one level below the repo root in both the Vite plugin and the standalone server.
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  return ["/usr/bin/swift", path.join(repoRoot, "scripts", "pdf-to-png.swift")];
+}
+
+function isEngine(value: string): value is OmrEngine {
+  return (OMR_ENGINES as readonly string[]).includes(value);
 }
 
 async function listOcrLanguages(tessdataDir: string): Promise<string[]> {
@@ -323,11 +368,14 @@ function toWireJob(record: JobRecord): OmrJob {
     id: record.id,
     state: record.state,
     filename: record.filename,
+    engine: record.engine,
     sheetsDone: record.sheetsDone,
     sheetsTotal: record.sheetsTotal,
     elapsedMs: elapsedMs(record),
+    resultCount: record.state === "done" ? record.resultPaths.length : 0,
     ...(record.message !== undefined ? { message: record.message } : {}),
     ...(record.error !== undefined ? { error: record.error } : {}),
+    ...(record.warnings.length > 0 ? { warnings: record.warnings } : {}),
   };
 }
 
@@ -342,6 +390,7 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
   const maxUploadBytes = opts.maxUploadBytes ?? OMR_MAX_UPLOAD_BYTES;
   const spawnFn = opts.spawnImpl ?? nodeSpawn;
   const tessdataDir = opts.tessdataDir ?? defaultTessdataDir();
+  const pdfToPngCommand = opts.pdfToPngCommand ?? defaultPdfToPngCommand();
 
   const jobs = new Map<string, JobRecord>();
   const queue: string[] = [];
@@ -386,12 +435,21 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
     return versionCache.value;
   }
 
+  async function homrStatus(): Promise<OmrEngineStatus> {
+    const homrPath = await resolveHomrPath(opts);
+    if (!homrPath) return { available: false, hint: `homr was not found. ${HOMR_SETUP_HINT}` };
+    // homr has no version flag; the path is enough to show which install is used.
+    return { available: true, path: homrPath };
+  }
+
   async function status(): Promise<OmrStatus> {
     const audiverisPath = await resolveAudiverisPath(opts);
     const ocrLanguages = await listOcrLanguages(tessdataDir);
+    const homr = await homrStatus();
 
     if (!audiverisPath) {
-      return { available: false, ocrLanguages, hint: `Audiveris was not found. ${SETUP_HINT}` };
+      const hint = `Audiveris was not found. ${SETUP_HINT}`;
+      return { available: false, ocrLanguages, hint, engines: { audiveris: { available: false, hint }, homr } };
     }
 
     const version = await cachedVersion(audiverisPath);
@@ -406,12 +464,20 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
       version,
       ocrLanguages,
       ...(hint !== undefined ? { hint } : {}),
+      engines: {
+        audiveris: { available: true, path: audiverisPath, version, ...(hint !== undefined ? { hint } : {}) },
+        homr,
+      },
     };
   }
 
   async function startJob(record: JobRecord): Promise<void> {
     runningId = record.id;
     record.state = "running";
+    if (record.engine === "homr") {
+      await startHomrJob(record);
+      return;
+    }
 
     const audiverisPath = await resolveAudiverisPath(opts);
     if (!audiverisPath) {
@@ -461,7 +527,7 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
         }
         const resultPath = await findResultFile(record.dir);
         if (code === 0 && resultPath) {
-          record.resultPath = resultPath;
+          record.resultPaths = [resultPath];
           if (record.sheetsTotal != null) record.sheetsDone = record.sheetsTotal;
           finishJob(record, "done");
           return;
@@ -471,6 +537,146 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
         finishJob(record, "error", `${reason}\n${record.logTail.join("\n")}`);
       })();
     });
+  }
+
+  /**
+   * Runs one child process of a multi-step job (homr's page renderer, then homr once per
+   * page). Resolves with the exit code, or null when it was killed (timeout/cancel) or
+   * failed to start; `record.proc` always points at the step in flight so cancel and
+   * shutdown kill the right process group.
+   */
+  function runStep(record: JobRecord, command: string, args: string[], onLine: (line: string) => void): Promise<number | null> {
+    return new Promise((resolve) => {
+      let proc: ChildProcess;
+      try {
+        proc = spawnFn(command, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        record.logTail.push(`failed to start ${path.basename(command)}: ${(e as Error).message}`);
+        resolve(null);
+        return;
+      }
+      record.proc = proc;
+      let resolveExit = (): void => {};
+      runningExit = new Promise<void>((r) => {
+        resolveExit = r;
+      });
+      proc.stdout?.on("data", makeLineFeeder(onLine));
+      proc.stderr?.on("data", makeLineFeeder(onLine));
+      proc.on("error", (err) => {
+        record.logTail.push(`failed to run ${path.basename(command)}: ${err.message}`);
+        resolveExit();
+        resolve(null);
+      });
+      proc.on("close", (code, signal) => {
+        resolveExit();
+        resolve(signal ? null : code);
+      });
+    });
+  }
+
+  /**
+   * Remembers a homr/renderer log line. homr's CoreML backend prints long, harmless "E5RT"
+   * warnings (skipped), and its text-reading step logs in color with a
+   * "[INFO] <date> <time> [RapidOCR] file.py:63:" prefix (stripped for display).
+   */
+  function ingestHomrLine(record: JobRecord, rawLine: string, pagePrefix: string): void {
+    const line = rawLine
+      .replace(/\r$/, "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/^\[[A-Z]+\]\s+\S+\s+\S+\s+(\[[^\]]*\]\s+)?\S+:\d+:\s*/, "")
+      .trim();
+    if (!line || line.startsWith("E5RT") || line.startsWith("Downloaded ")) return;
+    record.logTail.push(line);
+    if (record.logTail.length > LOG_TAIL_LINES) record.logTail.shift();
+    // homr prints its whole token stream on one "Writing XML" line; don't show that.
+    const shown = line.length > 120 ? `${line.slice(0, 117)}...` : line;
+    record.message = `${pagePrefix}${shown}`;
+  }
+
+  /**
+   * homr reads one image at a time and writes `<image stem>.musicxml` beside it. A PDF is
+   * first rendered to page PNGs; each page is then recognized in turn, and a page homr
+   * can't read becomes a warning rather than failing the whole job.
+   */
+  async function startHomrJob(record: JobRecord): Promise<void> {
+    const homrPath = await resolveHomrPath(opts);
+    if (!homrPath) {
+      finishJob(record, "error", `homr is not installed. ${HOMR_SETUP_HINT}`);
+      return;
+    }
+
+    const timeoutHandle = setTimeout(() => {
+      record.timedOut = true;
+      if (record.proc) killGroup(record.proc);
+    }, timeoutMs);
+    timeoutHandle.unref();
+    record.timeoutHandle = timeoutHandle;
+    const stopped = () => record.state === "cancelled" || record.timedOut === true;
+    const fail = (reason: string) => {
+      if (record.state === "cancelled") return; // DELETE already handled this job.
+      const why = record.timedOut ? `homr timed out after ${timeoutMs}ms` : reason;
+      finishJob(record, "error", `${why}\n${record.logTail.join("\n")}`);
+    };
+
+    const inputPath = path.join(record.dir, `${INPUT_STEM}.${record.inputExt}`);
+    let pages: string[];
+    if (record.inputExt === "pdf") {
+      const pagesDir = path.join(record.dir, "pages");
+      record.message = "Rendering PDF pages";
+      const [command, ...prefix] = pdfToPngCommand;
+      const code = await runStep(record, command!, [...prefix, inputPath, pagesDir, PDF_RENDER_DPI], (line) => {
+        const m = /^pages=(\d+)/.exec(line.trim());
+        if (m) record.sheetsTotal = Number(m[1]);
+        ingestHomrLine(record, line, "");
+      });
+      if (stopped() || code !== 0) {
+        fail(`rendering the PDF's pages failed${code != null ? ` (exit code ${code})` : ""}`);
+        return;
+      }
+      const files = await readdir(pagesDir).catch(() => [] as string[]);
+      pages = files
+        .filter((f) => /^page-\d+\.png$/.test(f))
+        .sort()
+        .map((f) => path.join(pagesDir, f));
+      if (pages.length === 0) {
+        fail("the PDF has no pages to recognize");
+        return;
+      }
+    } else {
+      pages = [inputPath];
+    }
+    record.sheetsTotal = pages.length;
+
+    const results: string[] = [];
+    for (const [i, page] of pages.entries()) {
+      if (stopped()) {
+        fail("homr was stopped");
+        return;
+      }
+      const prefix = pages.length > 1 ? `Page ${i + 1}/${pages.length}: ` : "";
+      record.message = `${prefix}starting homr`;
+      const code = await runStep(record, homrPath, [page], (line) => ingestHomrLine(record, line, prefix));
+      if (stopped()) {
+        fail("homr was stopped");
+        return;
+      }
+      const output = page.replace(/\.[^./]+$/, ".musicxml");
+      const wrote = await access(output).then(
+        () => true,
+        () => false,
+      );
+      if (code === 0 && wrote) results.push(output);
+      else record.warnings.push(`homr couldn't read page ${i + 1}${code ? ` (exit code ${code})` : ""}; it was skipped.`);
+      record.sheetsDone = i + 1;
+    }
+
+    if (results.length === 0) {
+      fail(pages.length > 1 ? "homr couldn't read any page" : "homr finished but produced no MusicXML output");
+      return;
+    }
+    record.resultPaths = results;
+    finishJob(record, "done");
   }
 
   function pump(): void {
@@ -502,7 +708,12 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
     pump();
   }
 
-  async function handleCreateJob(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleCreateJob(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const engineParam = url.searchParams.get("engine") ?? "audiveris";
+    if (!isEngine(engineParam)) {
+      sendError(res, 400, `unknown OMR engine; expected one of ${OMR_ENGINES.join(", ")}`);
+      return;
+    }
     let body: Buffer;
     try {
       body = await readBody(req, maxUploadBytes);
@@ -544,6 +755,9 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
       createdAt: Date.now(),
       dir,
       inputExt: ext,
+      engine: engineParam,
+      resultPaths: [],
+      warnings: [],
       logTail: [],
     };
     jobs.set(id, record);
@@ -553,24 +767,34 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
     sendJson(res, 202, { id });
   }
 
-  async function handleGetResult(res: ServerResponse, id: string): Promise<void> {
+  async function handleGetResult(res: ServerResponse, id: string, url: URL): Promise<void> {
     const record = jobs.get(id);
     if (!record) {
       sendError(res, 404, "unknown job id");
       return;
     }
-    if (record.state !== "done" || !record.resultPath) {
+    if (record.state !== "done" || record.resultPaths.length === 0) {
       sendError(res, 409, `job is ${record.state}`);
+      return;
+    }
+    const index = Number(url.searchParams.get("index") ?? "0");
+    const resultPath = Number.isInteger(index) ? record.resultPaths[index] : undefined;
+    if (resultPath === undefined) {
+      sendError(res, 404, `no result ${url.searchParams.get("index")}; this job has ${record.resultPaths.length}`);
       return;
     }
     let data: Buffer;
     try {
-      data = await readFile(record.resultPath);
+      data = await readFile(resultPath);
     } catch (e) {
       sendError(res, 500, `failed to read result: ${(e as Error).message}`);
       return;
     }
-    res.writeHead(200, { "Content-Type": "application/vnd.recordare.musicxml", "Content-Length": data.length });
+    // .mxl is zipped MusicXML (Audiveris); homr writes plain .musicxml.
+    const contentType = resultPath.endsWith(".mxl")
+      ? "application/vnd.recordare.musicxml"
+      : "application/vnd.recordare.musicxml+xml";
+    res.writeHead(200, { "Content-Type": contentType, "Content-Length": data.length });
     res.end(data);
   }
 
@@ -587,13 +811,13 @@ export function createOmrService(opts: OmrServiceOptions): OmrService {
         }
 
         if (method === "POST" && pathname === "/jobs") {
-          await handleCreateJob(req, res);
+          await handleCreateJob(req, res, url);
           return;
         }
 
         const resultMatch = /^\/jobs\/([^/]+)\/result$/.exec(pathname);
         if (resultMatch && method === "GET") {
-          await handleGetResult(res, decodeURIComponent(resultMatch[1]!));
+          await handleGetResult(res, decodeURIComponent(resultMatch[1]!), url);
           return;
         }
 
