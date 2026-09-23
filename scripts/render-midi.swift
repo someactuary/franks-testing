@@ -1,5 +1,5 @@
-// Renders a Standard MIDI File to a WAV file offline, using macOS's built-in sound bank
-// (Apple's General MIDI DLS piano) through AVAudioEngine's manual rendering mode. About
+// Renders a Standard MIDI File to a WAV file offline, using macOS's built-in General MIDI
+// sound bank (one sampler per track, loaded with that track's first program change) through AVAudioEngine's manual rendering mode. About
 // 180x faster than real time, no third-party software.
 //
 // This is a developer/validation tool, not part of the app: it is how the exported MIDI
@@ -24,18 +24,33 @@ let bankURL = URL(fileURLWithPath: args.count > 3 ? args[3] : "/System/Library/C
 let sampleRate = 44100.0
 let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
 let engine = AVAudioEngine()
-let sampler = AVAudioUnitSampler()
-engine.attach(sampler)
-engine.connect(sampler, to: engine.mainMixerNode, format: format)
 try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
-try sampler.loadSoundBankInstrument(at: bankURL, program: 0,
-    bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB), bankLSB: UInt8(kAUSampler_DefaultBankLSB))
-try engine.start()
-
 let seq = AVAudioSequencer(audioEngine: engine)
 try seq.load(from: midiURL, options: [])
+
+// A sampler loaded from a sound bank plays one instrument and ignores program changes,
+// so each track gets its own sampler loaded with the track's first program (default 0).
+func firstProgram(_ track: AVMusicTrack) -> UInt8 {
+    var program: UInt8 = 0
+    track.enumerateEvents(in: AVMakeBeatRange(0, AVMusicTimeStampEndOfTrack)) { event, _, stop in
+        if let pc = event as? AVMIDIProgramChangeEvent { program = UInt8(pc.programNumber & 0x7F); stop.pointee = true }
+    }
+    return program
+}
 var longest = 0.0
-for t in seq.tracks { t.destinationAudioUnit = sampler; longest = max(longest, t.lengthInSeconds) }
+var programs: [UInt8] = []
+for t in seq.tracks {
+    let sampler = AVAudioUnitSampler()
+    engine.attach(sampler)
+    engine.connect(sampler, to: engine.mainMixerNode, format: format)
+    let program = firstProgram(t)
+    programs.append(program)
+    try sampler.loadSoundBankInstrument(at: bankURL, program: program,
+        bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB), bankLSB: UInt8(kAUSampler_DefaultBankLSB))
+    t.destinationAudioUnit = sampler
+    longest = max(longest, t.lengthInSeconds)
+}
+try engine.start()
 seq.prepareToPlay()
 try seq.start()
 
@@ -56,4 +71,8 @@ while engine.manualRenderingSampleTime < total {
         }
     } else if status == .error { print("render error"); break }
 }
+// Top-level objects are never deinitialized, so close explicitly: this is what writes the
+// final RIFF/data chunk sizes. Without it the WAV header says 0 frames.
+out.close()
+print("programs=\(programs)")
 print(String(format: "tracks=%d sequenceLength=%.1fs rendered=%.1fs peak=%.3f rms=%.4f", seq.tracks.count, longest, Double(total)/sampleRate, peak, (sumSq/max(count,1)).squareRoot()))

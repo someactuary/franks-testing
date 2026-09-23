@@ -130,6 +130,19 @@ describe("MusicXML import input handling", () => {
     expect(structuralDigest(importMusicXml(buffer))).toEqual(structuralDigest(FIXTURES.scale!()));
   });
 
+  it("keeps the part's MIDI program (1-based in MusicXML, 0-based in the model)", () => {
+    const score = FIXTURES.scale!();
+    score.parts[0]!.midiProgram = 40; // violin
+    const xml = exportMusicXml(score);
+    expect(xml).toContain("<midi-program>41</midi-program>");
+    expect(importMusicXml(xml).parts[0]!.midiProgram).toBe(40);
+  });
+
+  it("defaults to program 0 when the part names none", () => {
+    const xml = exportMusicXml(FIXTURES.scale!()).replace(/<midi-instrument[\s\S]*?<\/midi-instrument>/g, "");
+    expect(importMusicXml(xml).parts[0]!.midiProgram).toBe(0);
+  });
+
   it("throws MusicXmlError on malformed XML", () => {
     expect(() => importMusicXml("<score-partwise><part-list>")).toThrow(MusicXmlError);
   });

@@ -242,6 +242,7 @@ interface RawPart {
   id: string;
   name: string;
   abbreviation?: string;
+  midiProgram?: number;
   staffCount: number;
   measures: RawMeasure[];
 }
@@ -751,7 +752,7 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
 
   // --- part list ---
   const partList = kid(root, "part-list");
-  const partInfo = new Map<string, { name: string; abbreviation?: string }>();
+  const partInfo = new Map<string, { name: string; abbreviation?: string; midiProgram?: number }>();
   let groupName: string | undefined;
   let groupAbbrev: string | undefined;
   let groupSymbol: StaffGroupSymbol | undefined;
@@ -761,7 +762,15 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
         const id = child.getAttribute("id") ?? "";
         const name = childText(child, "part-name");
         const abbreviation = childText(child, "part-abbreviation");
-        partInfo.set(id, { name, ...(abbreviation ? { abbreviation } : {}) });
+        // MusicXML numbers programs 1-128; the model uses 0-127.
+        const midiInstrument = kid(child, "midi-instrument");
+        const program = midiInstrument ? childNum(midiInstrument, "midi-program") : undefined;
+        const midiProgram = program !== undefined && program >= 1 && program <= 128 ? program - 1 : undefined;
+        partInfo.set(id, {
+          name,
+          ...(abbreviation ? { abbreviation } : {}),
+          ...(midiProgram !== undefined ? { midiProgram } : {}),
+        });
       } else if (child.tagName === "part-group" && child.getAttribute("type") === "start") {
         const symbol = childText(child, "group-symbol");
         if (groupSymbol === undefined) {
@@ -786,6 +795,7 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
       id,
       name: info?.name ?? id,
       ...(info?.abbreviation ? { abbreviation: info.abbreviation } : {}),
+      ...(info?.midiProgram !== undefined ? { midiProgram: info.midiProgram } : {}),
       staffCount: state.staffCount,
       measures,
     });
@@ -968,7 +978,8 @@ export function importMusicXml(input: string | ArrayBuffer): Score {
     ...(staves.length >= 2 ? { bracket: groupSymbol ?? "brace" } : {}),
     staves,
     measures: partMeasures,
-    midiProgram: 0,
+    // Parts are merged into one, so the first part that names a program sets it.
+    midiProgram: rawParts.find((rp) => rp.midiProgram !== undefined)?.midiProgram ?? 0,
   };
 
   return {
