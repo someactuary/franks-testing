@@ -756,7 +756,7 @@ export const handleKey: KeyHandler = (state, key) => {
     const dots: EntryState["dots"] = key.alt ? (entry.dots === 2 ? 0 : 2) : entry.dots === 1 ? 0 : 1;
     return { commands: [], entry: { ...entry, dots } };
   }
-  if (entry.active && key.key === "0") {
+  if (entry.active && !key.mod && key.key === "0") {
     return enter(state, { kind: "rest" });
   }
   if (entry.active && /^[a-g]$/.test(lower)) {
@@ -792,7 +792,8 @@ export const handleKey: KeyHandler = (state, key) => {
     return { commands: [eraseEvent(at.event.id)] };
   }
 
-  if (key.key === "+" || key.key === "=" || key.key === "-") {
+  // Not with mod: ⌘= / ⌘- / ⌘0 are the browser's zoom keys and must reach it.
+  if (!key.mod && (key.key === "+" || key.key === "=" || key.key === "-")) {
     const alter: Alter = key.key === "-" ? -1 : 1;
     const targets = selectedNoteIds(state);
     if (targets.length > 0) {

@@ -223,6 +223,20 @@ describe("handleKey: note entry", () => {
     expect(ev.notes[0]!.pitch.alter).toBe(-1);
     expect(h.entry.alter).toBeNull();
   });
+
+  it("leaves mod+= / mod+- / mod+0 unhandled so they reach the browser's zoom", () => {
+    const h = new Harness(newPianoScore({ measureCount: 1 }));
+    h.press({ key: "n" });
+    h.press({ key: "4" });
+    h.press({ key: "c" }); // entry active and a note selected: plain +/-/0 would all be handled
+    for (const key of ["=", "+", "-", "0"]) {
+      expect(h.press({ key, mod: true })).toBeNull();
+    }
+    const ev = h.voiceItems(0)[0]!;
+    if (ev.kind !== "note") throw new Error("expected a note event");
+    expect(ev.notes[0]!.pitch.alter).toBe(0);
+    expect(h.voiceItems(0)).toHaveLength(2); // the C plus the rest-filled remainder, no extra rest entered
+  });
 });
 
 describe("handleKey: erase", () => {
