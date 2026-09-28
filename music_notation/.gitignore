@@ -1,0 +1,10 @@
+node_modules
+dist/
+.DS_Store
+*.log
+
+.claude/
+
+# Local sheet-music samples (third-party PDFs) and OMR scratch output: never commit
+sample_sheet_music/
+.omr-jobs/

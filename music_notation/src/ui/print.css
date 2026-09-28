@@ -1,0 +1,62 @@
+/*
+ * Print-only overrides. The actual @page { size: ... } rule is injected at
+ * runtime by App.tsx (as a <style>) because the page size in mm comes from
+ * the LayoutResult, not a static constant.
+ */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  /* Undo the full-height screen layout so every page prints, not just one viewport. */
+  .app,
+  .workspace,
+  .workspace main {
+    height: auto;
+    overflow: visible;
+  }
+
+  .shortcuts-panel,
+  .palette-row,
+  .staves-panel,
+  .new-score-form,
+  .toolbar,
+  .compare-panel,
+  .import-dialog-overlay {
+    display: none;
+  }
+
+  .workspace,
+  .workspace-with-compare {
+    display: block;
+  }
+
+  .page-stack {
+    gap: 0;
+    padding: 0;
+  }
+
+  .page-shadow {
+    box-shadow: none;
+  }
+
+  /* One SVG per printed page. */
+  .page-shadow {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .page-shadow:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  /* Cursor/selection are editing aids, not part of the printed score. */
+  .editor-overlay {
+    display: none;
+  }
+
+  .status-bar {
+    display: none;
+  }
+}
